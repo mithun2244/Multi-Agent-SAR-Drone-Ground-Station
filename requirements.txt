@@ -3,3 +3,7 @@ pydantic>=2.0        # the Phase 0 clue contract and every model-reply schema
 pyproj>=3.6          # WGS84 geodesics for geolocation and the geofence
 redis>=5.0           # Redis Streams, the event bus
 optuna>=4.0          # TPE search for the Phase 9 tuning study
+
+# Optional. SRTM .hgt tiles need nothing at all (see SrtmHgtDEM); this is only
+# for GeoTIFF/Copernicus rasters, and it pulls in GDAL.
+# rasterio>=1.3

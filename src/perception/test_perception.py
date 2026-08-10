@@ -5,6 +5,9 @@
 
 import itertools
 import math
+import os
+import struct
+import tempfile
 from datetime import datetime, timezone
 
 from ..contracts.clue import AgentSource, ClueContract, SpatialContext
@@ -31,7 +34,15 @@ from .geolocation import (
     slant_range_m,
     world_to_pixel,
 )
-from .terrain import ConstantDEM, GridDEM, load_dem
+from .terrain import (
+    ConstantDEM,
+    GeoTiffDEM,
+    GridDEM,
+    SrtmHgtDEM,
+    load_dem,
+    open_dem,
+    parse_hgt_name,
+)
 from .tracking import Affine, BoTSORT, TrackState
 
 _ids = itertools.count(1)
@@ -651,6 +662,154 @@ def test_dem_uncertainty_propagates_into_the_fix():
                          measured_ranges=[RangeEstimate(40.0, RangeSource.MEASURED_LIDAR, 0.5)],
                          dem=ConstantDEM(0.0, vertical_uncertainty_m=500.0))
     assert measured.sigma_m == 0.5
+
+
+# --------------------------------------------------------------------------
+# Real raster tiles
+# --------------------------------------------------------------------------
+
+def _write_hgt(directory, name="N46E008.hgt", side=1201, height=lambda r, c: 1000 + r):
+    """A real SRTM tile: raw big-endian int16, north-west corner in the name."""
+    values = [height(r, c) for r in range(side) for c in range(side)]
+    path = os.path.join(directory, name)
+    with open(path, "wb") as handle:
+        handle.write(struct.pack(f">{len(values)}h", *values))
+    return path
+
+
+def test_srtm_tile_names_give_the_south_west_corner():
+    assert parse_hgt_name("N46E008.hgt") == (46.0, 8.0)
+    assert parse_hgt_name("S34W071.hgt") == (-34.0, -71.0)
+    assert parse_hgt_name("n46e008.hgt") == (46.0, 8.0), "case must not matter"
+    for bad in ("hello.hgt", "X46E008.hgt", "N46Q008.hgt"):
+        try:
+            parse_hgt_name(bad)
+            raise AssertionError(f"{bad} must not parse")
+        except ValueError:
+            pass
+
+
+def test_a_real_srtm_tile_reads_without_any_dependency():
+    """`.hgt` is fully specified — a square of big-endian int16 with the corner
+    in the filename — so it needs no parser and no third-party package."""
+    directory = tempfile.mkdtemp()
+    dem = SrtmHgtDEM(_write_hgt(directory))
+
+    assert dem.rows == dem.cols == 1201
+    assert abs(dem.lat_min - 46.0) < 1e-9 and abs(dem.lat_max - 47.0) < 1e-9
+    assert abs(dem.lon_min - 8.0) < 1e-9 and abs(dem.lon_max - 9.0) < 1e-9
+    # Row 0 is the northern edge, so height rises going south in this fixture.
+    assert dem.elevation(47.0, 8.0) == 1000.0
+    assert dem.elevation(46.0, 8.0) == 1000.0 + 1200
+    # Bilinear between two rows.
+    half_step = (3.0 / 3600.0) / 2.0
+    assert abs(dem.elevation(47.0 - half_step, 8.5) - 1000.5) < 1e-6
+    # Three arcseconds at 46 degrees north.
+    assert 60.0 < dem.resolution_m < 95.0
+    assert dem.covers(46.5, 8.5) and not dem.covers(48.0, 8.5)
+
+
+def test_a_tile_of_the_wrong_size_is_refused():
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "N46E008.hgt")
+    with open(path, "wb") as handle:
+        handle.write(b"\x00" * 4096)
+    try:
+        SrtmHgtDEM(path)
+        raise AssertionError("a non-square byte count must be refused")
+    except ValueError as e:
+        assert "SRTM tile" in str(e)
+
+
+def test_srtm_voids_are_not_treated_as_elevations():
+    """SRTM leaves holes in steep shadowed terrain. Averaging one in would put
+    a target 32 km underground."""
+    directory = tempfile.mkdtemp()
+    hole = lambda r, c: -32768 if (r, c) == (600, 600) else 1500   # noqa: E731
+    dem = SrtmHgtDEM(_write_hgt(directory, side=1201, height=hole))
+
+    step = 3.0 / 3600.0
+    # Exactly on the void there is nothing real to weight, so there is no
+    # answer. Filling from a neighbour here would be a silent interpolation
+    # across the hole, which is a processing decision, not a measurement.
+    assert dem.elevation(47.0 - 600 * step, 8.0 + 600 * step) is None
+    # Half a post away, the three real corners carry it.
+    assert dem.elevation(47.0 - 600.5 * step, 8.0 + 600.5 * step) == 1500.0
+    assert dem.elevation(46.3, 8.3) == 1500.0, "far from the hole, nothing changes"
+
+    everywhere = SrtmHgtDEM(_write_hgt(directory, "N10E010.hgt", 1201, lambda r, c: -32768))
+    assert everywhere.elevation(10.5, 10.5) is None, "all void means no answer, not zero"
+
+
+def test_ray_marching_swaps_onto_a_real_tile_unchanged():
+    """The point of the interface: geolocation does not know or care which DEM
+    it is marching against."""
+    directory = tempfile.mkdtemp()
+    dem = SrtmHgtDEM(_write_hgt(directory, height=lambda r, c: 1200))
+    telemetry = Telemetry(46.5, 8.5, altitude_m=1500.0, yaw_deg=0.0, pitch_deg=90.0)
+
+    fix = geolocate(_CENTRE, _CAM, telemetry, dem=dem)
+    assert fix is not None and fix.range_source is RangeSource.INFERRED_TERRAIN
+    assert abs(fix.range_m - 300.0) < 1.0, "1500 m above 1200 m ground, looking straight down"
+    assert abs(fix.elevation_m - 1200.0) < 1.0
+    assert fix.sigma_m >= dem.vertical_uncertainty_m
+
+
+def test_marching_into_a_void_declines_rather_than_guesses():
+    directory = tempfile.mkdtemp()
+    dem = SrtmHgtDEM(_write_hgt(directory, "N20E020.hgt", 1201, lambda r, c: -32768))
+    telemetry = Telemetry(20.5, 20.5, altitude_m=1500.0, yaw_deg=0.0, pitch_deg=90.0)
+    assert geolocate(_CENTRE, _CAM, telemetry, dem=dem) is None, (
+        "unknown terrain must produce no fix, never an assumed one")
+
+
+def test_geotiff_needs_rasterio_and_says_so():
+    """Rather than shipping a half-correct TIFF parser that fails on somebody's
+    tile in the field with a silently wrong altitude."""
+    try:
+        import rasterio  # noqa: F401
+        return  # installed here; the import path is exercised for real
+    except ImportError:
+        pass
+
+    try:
+        GeoTiffDEM("nonexistent.tif")
+        raise AssertionError("must not silently succeed without rasterio")
+    except ImportError as e:
+        assert "pip install rasterio" in str(e)
+        assert "SrtmHgtDEM" in str(e), "and point at the dependency-free option"
+
+
+def test_open_dem_dispatches_on_extension():
+    directory = tempfile.mkdtemp()
+    assert isinstance(open_dem(_write_hgt(directory)), SrtmHgtDEM)
+
+    grid = GridDEM([[0.0, 1.0], [2.0, 3.0]], 46.0, 8.0, 1.0, 1.0)
+    json_path = os.path.join(directory, "tile.json")
+    grid.to_json(json_path)
+    assert isinstance(open_dem(json_path), GridDEM)
+
+    try:
+        open_dem("terrain.xyz")
+        raise AssertionError("an unknown extension must raise")
+    except ValueError as e:
+        assert "no DEM reader" in str(e)
+
+
+def test_every_dem_source_offers_the_same_interface():
+    """Ray-marching depends on exactly three members; a source missing one
+    would fail only when a search was already under way."""
+    directory = tempfile.mkdtemp()
+    sources = [
+        ConstantDEM(1200.0),
+        GridDEM([[1.0, 2.0], [3.0, 4.0]], 46.0, 8.0, 0.1, 0.1),
+        SrtmHgtDEM(_write_hgt(directory, "N30E030.hgt")),
+    ]
+    for dem in sources:
+        assert callable(dem.elevation)
+        assert isinstance(dem.vertical_uncertainty_m, float)
+        assert dem.resolution_m > 0
+        assert repr(dem)
 
 
 def test_dem_json_round_trip(tmp=None):

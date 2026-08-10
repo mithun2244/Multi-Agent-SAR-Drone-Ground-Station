@@ -218,12 +218,21 @@ def intersect_dem(ray, telemetry, dem, max_range_m=5000.0, step_m=None, toleranc
         step_m = min(50.0, max(1.0, getattr(dem, "resolution_m", 30.0)))
 
     def clearance(distance):
+        """Height above ground, or None where the DEM has no data.
+
+        Real tiles have voids — steep shadowed terrain SRTM never filled. A void
+        is not a height, so it cannot be interpolated across or assumed to be
+        sea level; the march stops instead and the caller declines to place the
+        target.
+        """
         lat, lon, elevation = project(
             telemetry.latitude, telemetry.longitude, telemetry.altitude_m, ray, distance
         )
-        return elevation - dem.elevation(lat, lon)
+        ground = dem.elevation(lat, lon)
+        return None if ground is None else elevation - ground
 
-    if clearance(0.0) <= 0.0:
+    start = clearance(0.0)
+    if start is None or start <= 0.0:
         # Drone at or below ground: bad telemetry, wrong datum, or wrong DEM.
         # Guessing here would put a rescue team somewhere invented.
         return None
@@ -231,11 +240,17 @@ def intersect_dem(ray, telemetry, dem, max_range_m=5000.0, step_m=None, toleranc
     previous = 0.0
     distance = step_m
     while distance <= max_range_m:
-        if clearance(distance) <= 0.0:
+        gap = clearance(distance)
+        if gap is None:
+            return None  # marched into a void; nothing here can be trusted
+        if gap <= 0.0:
             low, high = previous, distance
             while high - low > tolerance_m:
                 middle = (low + high) / 2.0
-                if clearance(middle) > 0.0:
+                midpoint = clearance(middle)
+                if midpoint is None:
+                    return None
+                if midpoint > 0.0:
                     low = middle
                 else:
                     high = middle

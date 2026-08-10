@@ -7,7 +7,7 @@ operator gets one ranked picture of who is out there, where, and who to reach
 first.
 
 Built in nine phases, each with its own exit criteria and test suite.
-**384 automated checks** across eight suites, no network required.
+**393 automated checks** across eight suites, no network required.
 
 ```
 sensors ─▶ WBF ─▶ BoT-SORT ─▶ geolocation ─▶ Redis Streams ─▶ fusion ─▶ picture
@@ -28,6 +28,18 @@ sensors ─▶ WBF ─▶ BoT-SORT ─▶ geolocation ─▶ Redis Streams ─�
 | **Weighted Box Fusion** | Merges both sensors' boxes into one confirmed target carrying an RGB class *and* a measured LiDAR range. Support is counted per **distinct detector**, not per box — two RGB boxes are one opinion. |
 | **BoT-SORT tracking** | Constant-velocity Kalman filter on `(cx, cy, w, h)`, ByteTrack two-stage association, and camera-motion compensation so drone movement is not mistaken for target movement. |
 | **Geodesic geolocation** | WGS84 geodesics via `pyproj`, and **DEM ray-marching** to find where the line of sight actually strikes the ground. A *measured* LiDAR range always overrides a terrain-inferred one. |
+
+**Terrain** comes from real elevation tiles. `SrtmHgtDEM` reads NASA `.hgt`
+files with **no dependency at all** — the format is a raw big-endian int16
+square with its corner in the filename, so there is nothing to guess.
+`GeoTiffDEM` handles GeoTIFF/Copernicus tiles through `rasterio`, which stays
+optional because GeoTIFF is a container with dozens of legal encodings and a
+half-correct parser would produce a silently wrong altitude rather than a crash.
+Both sit behind the same three-member interface as `ConstantDEM` and `GridDEM`,
+so ray-marching swaps between them without a line changing.
+
+SRTM voids are not elevations: a hole is excluded from interpolation, and a ray
+that marches into one produces **no fix** rather than an assumed one.
 
 The Kalman filter is four independent 2×2 filters, not an approximation:
 BoT-SORT's 8-D filter decomposes exactly, since its transition and covariances
@@ -177,6 +189,7 @@ because the scenario's decoys are visible to RGB alone.
 | **Language** | Python 3.12, standard library first |
 | **Contracts** | `pydantic` v2 |
 | **Geodesy** | `pyproj` (WGS84) |
+| **Terrain** | stdlib `.hgt` reader; `rasterio` *optional*, for GeoTIFF |
 | **Bus** | `redis` (Redis Streams) |
 | **Optimisation** | `optuna` (TPE) |
 | **Inference** | NVIDIA NIM via stdlib `urllib` — no SDK |
@@ -202,6 +215,7 @@ src/
 ├── guardrails/              Phases 6-7 — schemas, cache, contradiction, provenance, tamper
 ├── critic/                  Phase 8 — outcomes, metrics, loss, agent counterfactuals
 └── tuning/                  Phase 9 — params, scenario, Optuna objective
+                             + live_system_check.py — the one online script
 config/tuned_params.json     the tuned operating point
 docs/architecture.md         the design this was built from
 ```
@@ -244,7 +258,7 @@ python -m src.tuning.demo              # Optuna study, baseline vs tuned
 
 ```bash
 python -m src.evaluation.test_evaluation     #  23 checks
-python -m src.perception.test_perception     #  66 checks
+python -m src.perception.test_perception     #  75 checks
 python -m src.coordinator.test_coordinator   #  95 checks
 python -m src.agents.test_agents             #  63 checks
 python -m src.guardrails.test_guardrails     #  51 checks
@@ -261,11 +275,29 @@ rather than a rewrite:
 ```bash
 export NVIDIA_API_KEY=...                       # live NIM instead of stubs
 export REDIS_URL=redis://localhost:6379/0       # real Redis instead of the fake
+
+python -m src.tuning.live_system_check          # verify both, before you fly
 python -m src.coordinator.demo --live-weather   # live Open-Meteo
 ```
 
-Without them the system runs fully offline on fixed replies — deterministic, and
-never dependent on a third party's uptime or quota.
+`live_system_check` is the only thing in this repository that deliberately
+touches the network. It answers what the offline suite structurally cannot: is
+the key valid, is the endpoint reachable, does a round trip work *right now*. It
+sends a minimal completion to each NIM model in use (text and vision), publishes
+a probe `ClueContract` to a throwaway Redis stream and reads it back, compares
+the parsed contract to what was sent, and deletes the stream afterwards — pass
+or fail. An unset variable is reported as `SKIP` with the variable's name, never
+as silence, and the API key is redacted from every error.
+
+```
+  [PASS] NIM meta/llama-3.1-70b-instruct     0.44s  'READY'
+  [PASS] Redis round trip                    0.01s  XADD/XREAD ok, entry 1786…-0
+```
+
+Exit code is `0` when everything checked passed, `1` if anything failed, `2` if
+nothing was checked at all. Without the variables the system still runs fully
+offline on fixed replies — deterministic, and never dependent on a third party's
+uptime or quota.
 
 ---
 
@@ -274,17 +306,19 @@ never dependent on a third party's uptime or quota.
 Stated plainly, because the code cannot supply it for itself:
 
 - **Trained detector weights.** `yolo11n_stub` / `lidar_stub` model the *shape*
-  of RGB and LiDAR behaviour, not a real network's output.
-- **Real recorded footage.** The Scene agent refuses to describe a frame it was
-  not handed, so it needs real captures.
-- **A raster DEM.** `GridDEM` interpolates real elevation data; the loader for
-  GeoTIFF/SRTM tiles is a new class, not a change to geolocation.
-- **Live NIM and Redis endpoints.** Both paths are transport-mocked in tests but
-  have not round-tripped against the live services.
-- **A tuning run on real data**, as above.
+  of RGB and LiDAR behaviour — recall, confidence spread, the LiDAR range
+  advantage — not a real network's output.
+- **Real recorded RGB and LiDAR footage.** The Scene agent refuses to describe a
+  frame it was not handed, and the frame ledger hashes captures at source, so
+  both need real recordings.
+- **A tuning run on real data.** The Optuna study optimises against a simulator;
+  the numbers above are a starting point, not a field result.
+
+Everything external is an injected callable, so each of these is a substitution
+rather than a rewrite.
 
 ---
 
 ## Licence
 
-Not yet specified.
+[MIT](LICENSE).
