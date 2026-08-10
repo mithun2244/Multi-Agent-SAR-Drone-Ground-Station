@@ -425,10 +425,13 @@ def main(argv=None):
     scene, health = wiring.agents["scene"], wiring.agents["health"]
     history, interview = wiring.agents["history"], wiring.agents["interview"]
 
+    nim_line = (f"live — {client.model} / {client.vision_model}" if client
+                else "stubbed (set NVIDIA_API_KEY for live NIM calls)")
+    weather_line = "Open-Meteo (live)" if live_weather else "fixed conditions (offline)"
+
     print(f"\n  redis:   {backend}")
-    print(f"  weather: {'Open-Meteo (live)' if live_weather else 'fixed conditions (offline)'}")
-    print(f"  nim:     {f'live — {client.model} / {client.vision_model}' if client
-                          else 'stubbed (set NVIDIA_API_KEY for live NIM calls)'}")
+    print(f"  weather: {weather_line}")
+    print(f"  nim:     {nim_line}")
     print(f"  trust:   {len(registry.tags)} registered origin(s); "
           f"unconfigured checks: {list(registry.unconfigured) or 'none'}")
     print(f"  params:  {'tuned from ' + str(CONFIG_PATH) if CONFIG_PATH.exists() else 'shipped defaults (no tuning run yet)'}")
