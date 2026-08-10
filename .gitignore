@@ -1,0 +1,70 @@
+# --- secrets -----------------------------------------------------------
+# NVIDIA_API_KEY, REDIS_URL and anything else that authenticates us.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# --- virtual environments ----------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- python ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- test and type caches ----------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- raw data and logs -------------------------------------------------
+# Recorded RGB/LiDAR footage, telemetry, DEM tiles and bus dumps. These are
+# large, often personally identifying, and never belong in the repository.
+data/
+raw/
+recordings/
+footage/
+dem_tiles/
+logs/
+*.log
+*.jsonl
+*.mcap
+*.bag
+*.rdb          # Redis dumps
+*.tif
+*.tiff
+
+# --- local configuration overrides -------------------------------------
+# config/tuned_params.json IS committed: it is the result of a tuning run and
+# the README quotes it. Machine-specific overrides are not.
+config/*.local.json
+config/local/
+*.local.json
+settings.local.json
+.claude/settings.local.json
+
+# --- optimisation artefacts --------------------------------------------
+optuna*.db
+*.sqlite3
+studies/
+
+# --- editors and operating systems --------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

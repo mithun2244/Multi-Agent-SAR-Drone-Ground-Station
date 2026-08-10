@@ -1,0 +1,5 @@
+# Four third-party packages. Everything else is the standard library.
+pydantic>=2.0        # the Phase 0 clue contract and every model-reply schema
+pyproj>=3.6          # WGS84 geodesics for geolocation and the geofence
+redis>=5.0           # Redis Streams, the event bus
+optuna>=4.0          # TPE search for the Phase 9 tuning study

@@ -1,0 +1,20 @@
+{
+  "hazard_urgency_step": 0.54554736162838,
+  "health_multiplier_ceiling": 1.2983613507450433,
+  "health_multiplier_floor": 0.35731492339739135,
+  "lidar_weight": 1.8623922792450005,
+  "merge_distance_m": 25.0,
+  "min_report_confidence": 0.04430687412567719,
+  "rgb_weight": 0.6821402866232968,
+  "sector_weight": 0.7876041058911477,
+  "target_far": 0.1,
+  "track_high_thresh": 0.41428058820540076,
+  "track_min_hits": 2,
+  "track_new_thresh": 0.4505292003623759,
+  "trust_drone_lidar": 0.9632564737662358,
+  "trust_drone_rgb": 0.7408198551698044,
+  "trust_perception_fusion": 0.8814216455063953,
+  "urgency_weight": 1.9838622436675495,
+  "wbf_iou_threshold": 0.44451033166955467,
+  "wbf_score_threshold": 0.18048919939269883
+}
