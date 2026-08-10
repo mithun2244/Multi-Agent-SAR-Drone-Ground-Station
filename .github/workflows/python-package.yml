@@ -16,7 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        # 3.10 is the floor: the codebase uses PEP 604 annotations (`float | None`)
+        # in dataclass and Pydantic field positions, which are evaluated at class
+        # creation and so need 3.10 or later at runtime, not just to parse.
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -27,7 +30,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
+        python -m pip install flake8
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with flake8
       run: |
@@ -35,6 +38,18 @@ jobs:
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
+    - name: Run the test suites
+      # Not pytest: the suites are assert-based modules run with `python -m`, and
+      # the packages deliberately have no __init__.py (namespace packages), so
+      # pytest would import each test file top-level and its relative imports
+      # would fail. Each command exits non-zero on failure, and the default shell
+      # is `bash -e`, so the first failing suite fails the job.
       run: |
-        pytest
+        python -m src.evaluation.test_evaluation
+        python -m src.perception.test_perception
+        python -m src.coordinator.test_coordinator
+        python -m src.agents.test_agents
+        python -m src.guardrails.test_guardrails
+        python -m src.guardrails.test_adversarial
+        python -m src.critic.test_critic
+        python -m src.tuning.test_tuning
