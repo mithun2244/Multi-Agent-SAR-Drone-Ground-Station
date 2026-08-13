@@ -1,6 +1,6 @@
 """Detector stubs for Phase 2, standing in for the real models.
 
-`YOLO11n` on the RGB frame and the LiDAR range-image detector are not wired up
+`YOLO11m` on the RGB frame and the LiDAR range-image detector are not wired up
 yet. These deterministic stubs emit valid `ClueContract` instances with the
 right *characteristics* so the fusion logic downstream can be built and tested
 against something honest:
@@ -162,17 +162,16 @@ class StubDetector:
             k += 1
 
 
-def yolo11n_stub(seed=0, **kwargs):
+def yolo11m_stub(seed=0, **kwargs):
     """RGB detector: confident about *what*, looser about *where*.
 
-    Stands in for YOLO11n (Nano), chosen over YOLO11m for demo latency.
+    Stands in for YOLO11m (Medium), the operational RGB detector.
 
-    The swap is nominal here: these knobs are unchanged from the YOLO11m stub
-    because nobody has measured what Nano actually costs on this data. Nano does
-    detect less than medium, but writing a guessed recall into the stub would
-    put an invented accuracy figure inside the thing built to measure accuracy.
-    Pass `recall=` to explore the trade; settle it with the Phase 1 harness and
-    real models.
+    These knobs are a plausible shape for a medium model, not a measurement:
+    nobody has run the real weights on this data yet. Writing a figure in here
+    that looked measured would put an invented accuracy number inside the thing
+    built to measure accuracy. Pass `recall=` to explore the trade; settle it
+    with the Phase 1 harness and real weights.
     """
     defaults = dict(
         recall=0.85,

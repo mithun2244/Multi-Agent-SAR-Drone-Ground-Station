@@ -205,7 +205,7 @@ def test_decoys_are_invisible_to_lidar():
     """The whole point of the decoys: RGB sees them, LiDAR does not, so weighted
     box fusion scores them on one modality's word alone — the architecture's
     "a target that shows up in one but not the other is suspect"."""
-    from ..perception.detectors import lidar_stub, yolo11n_stub
+    from ..perception.detectors import lidar_stub, yolo11m_stub
     from ..perception.fusion import weighted_box_fusion
     from .scenario import _stub_targets
 
@@ -214,8 +214,8 @@ def test_decoys_are_invisible_to_lidar():
     assert decoys and all(d.range_m is None for d in decoys), "nothing ranges a decoy"
     assert all(t.range_m is not None for t in clear + faint), "people are ranged"
 
-    rgb = (yolo11n_stub(seed=0, recall=1.0, fp_per_frame=0.0).detect("f0", clear + faint, "c")
-           + yolo11n_stub(seed=200, recall=1.0, fp_per_frame=0.0).detect("f0", decoys, "c"))
+    rgb = (yolo11m_stub(seed=0, recall=1.0, fp_per_frame=0.0).detect("f0", clear + faint, "c")
+           + yolo11m_stub(seed=200, recall=1.0, fp_per_frame=0.0).detect("f0", decoys, "c"))
     lidar = lidar_stub(seed=0, recall=1.0, fp_per_frame=0.0).detect("f0", clear + faint, "c")
 
     fused = weighted_box_fusion([rgb, lidar], iou_threshold=0.55)

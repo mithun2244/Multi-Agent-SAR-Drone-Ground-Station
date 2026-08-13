@@ -24,7 +24,7 @@ sensors ─▶ WBF ─▶ BoT-SORT ─▶ geolocation ─▶ Redis Streams ─�
 
 | Stage | What it does |
 |---|---|
-| **YOLO11n + LiDAR** | RGB classifies, LiDAR ranges. Two modalities, so a target visible to one and not the other is suspect. |
+| **YOLO11m + LiDAR** | RGB classifies, LiDAR ranges. Two modalities, so a target visible to one and not the other is suspect. |
 | **Weighted Box Fusion** | Merges both sensors' boxes into one confirmed target carrying an RGB class *and* a measured LiDAR range. Support is counted per **distinct detector**, not per box — two RGB boxes are one opinion. |
 | **BoT-SORT tracking** | Constant-velocity Kalman filter on `(cx, cy, w, h)`, ByteTrack two-stage association, and camera-motion compensation so drone movement is not mistaken for target movement. |
 | **Geodesic geolocation** | WGS84 geodesics via `pyproj`, and **DEM ray-marching** to find where the line of sight actually strikes the ground. A *measured* LiDAR range always overrides a terrain-inferred one. |
@@ -305,7 +305,7 @@ uptime or quota.
 
 Stated plainly, because the code cannot supply it for itself:
 
-- **Trained detector weights.** `yolo11n_stub` / `lidar_stub` model the *shape*
+- **Trained detector weights.** `yolo11m_stub` / `lidar_stub` model the *shape*
   of RGB and LiDAR behaviour — recall, confidence spread, the LiDAR range
   advantage — not a real network's output.
 - **Real recorded RGB and LiDAR footage.** The Scene agent refuses to describe a

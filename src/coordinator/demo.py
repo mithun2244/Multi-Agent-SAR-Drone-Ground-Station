@@ -14,7 +14,8 @@ are fixed so the demo is deterministic and works offline.
     python -m src.coordinator.demo --live-weather
     REDIS_URL=redis://localhost:6379/0 python -m src.coordinator.demo
 """
-
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import os
 import sys
@@ -35,7 +36,7 @@ from ..guardrails.cache import ResponseCache
 from ..guardrails.provenance import OPEN_METEO_ENDPOINT, TAG_TRACK, ProvenanceRegistry
 from ..tuning.params import CONFIG_PATH, load_params
 from ..perception.agent import DetectionAgent
-from ..perception.detectors import Target, lidar_stub, yolo11n_stub
+from ..perception.detectors import Target, lidar_stub, yolo11m_stub
 from ..perception.geolocation import (
     Camera,
     Telemetry,
@@ -87,7 +88,7 @@ def build_detection_agent(bus, case_id):
 
     agent = DetectionAgent(bus, case_id, camera, dem=dem, tracker=BoTSORT(min_hits=3),
                            device_id=DRONE_ID)
-    rgb = yolo11n_stub(seed=11, recall=0.95, device_id=DRONE_ID)
+    rgb = yolo11m_stub(seed=11, recall=0.95, device_id=DRONE_ID)
     lidar = lidar_stub(seed=11, recall=0.8, device_id=DRONE_ID)
     sortie = {"frame": 0}
 
@@ -339,6 +340,9 @@ def build_case(live_weather=False):
     now = datetime.now(timezone.utc)
     blackboard = Blackboard()
     case = blackboard.open_case(
+        # CASE_ID joins a case another process is already publishing to — the
+        # mock drone feed, say. Unset mints a fresh one, as before.
+        case_id=os.environ.get("CASE_ID") or None,
         sector="north ridge",
         reported_missing="2 hikers",
         missing_since=now - timedelta(hours=2),

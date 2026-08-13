@@ -10,7 +10,7 @@ Deliberately synthetic
 Subjects are projected into the frame from known world positions, so ground
 truth is exact and a fold is reproducible from a seed. That makes the search
 honest about the *plumbing* — thresholds, trust weights, ranking weights — and
-says nothing about how a real YOLO11n behaves on real footage. A configuration
+says nothing about how a real YOLO11m behaves on real footage. A configuration
 tuned here is a starting point for a real tuning run against real recordings,
 not a substitute for one.
 """
@@ -25,7 +25,7 @@ from ..coordinator.fusion import CoordinatorFusion
 from ..critic.outcomes import CaseOutcome, Subject
 from ..perception.agent import DetectionAgent
 from ..perception.detectors import Target as StubTarget
-from ..perception.detectors import lidar_stub, yolo11n_stub
+from ..perception.detectors import lidar_stub, yolo11m_stub
 from ..perception.geolocation import (
     Camera,
     Telemetry,
@@ -194,15 +194,15 @@ def run(params=None, seed=0, frames=6, case_id="tune-0000", missing_hours=2.0):
     )
     # Separate detector instances per population: the clear subjects, the faint
     # casualty, and the decoys that only RGB can see.
-    rgb_clear = yolo11n_stub(seed=seed, recall=0.95, conf_range=(0.65, 0.95),
+    rgb_clear = yolo11m_stub(seed=seed, recall=0.95, conf_range=(0.65, 0.95),
                              fp_per_frame=0.15)
     lidar_clear = lidar_stub(seed=seed, recall=0.88, conf_range=(0.55, 0.88),
                              fp_per_frame=0.10)
-    rgb_faint = yolo11n_stub(seed=seed + 100, recall=0.72, conf_range=(0.40, 0.68),
+    rgb_faint = yolo11m_stub(seed=seed + 100, recall=0.72, conf_range=(0.40, 0.68),
                              fp_per_frame=0.0)
     lidar_faint = lidar_stub(seed=seed + 100, recall=0.60, conf_range=(0.35, 0.60),
                              fp_per_frame=0.0)
-    rgb_decoy = yolo11n_stub(seed=seed + 200, recall=0.92, conf_range=(0.55, 0.85),
+    rgb_decoy = yolo11m_stub(seed=seed + 200, recall=0.92, conf_range=(0.55, 0.85),
                              fp_per_frame=0.0)
 
     detections, raw_detections, truth_boxes = [], [], []

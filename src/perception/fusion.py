@@ -1,6 +1,6 @@
 """Weighted Box Fusion — merge RGB and LiDAR detections into confirmed targets.
 
-Phase 2 (docs/architecture.md): YOLO11n runs on the RGB frame to classify
+Phase 2 (docs/architecture.md): YOLO11m runs on the RGB frame to classify
 targets, a second detector runs on the LiDAR range image for depth and range,
 and their detections are combined with Weighted Box Fusion so each confirmed
 target carries both an RGB class and a measured LiDAR range.
@@ -204,11 +204,11 @@ def _fuse_cluster(cluster, frame_id, label, n_models, weight_sum, iou_threshold)
 
 
 if __name__ == "__main__":  # a worked example, for eyeballing a merge
-    from .detectors import Target, lidar_stub, yolo11n_stub
+    from .detectors import Target, lidar_stub, yolo11m_stub
 
     targets = [Target((100, 100, 160, 240), (46.8182, 8.2275)),
                Target((600, 300, 650, 420), (46.8190, 8.2280))]
-    rgb, lidar = yolo11n_stub(seed=3), lidar_stub(seed=3)
+    rgb, lidar = yolo11m_stub(seed=3), lidar_stub(seed=3)
     rgb_clues = rgb.detect("frame_0001", targets)
     lidar_clues = lidar.detect("frame_0001", targets)
 

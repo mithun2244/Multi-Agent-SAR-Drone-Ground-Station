@@ -61,6 +61,11 @@ optuna*.db
 *.sqlite3
 studies/
 
+# --- generated output ---------------------------------------------------
+# coordinator/map_visualizer.py writes this; the script is the source, the
+# map is a render of wherever it last pointed.
+sar_target_map.html
+
 # --- editors and operating systems --------------------------------------
 .vscode/
 .idea/

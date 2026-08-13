@@ -14,9 +14,10 @@
 - **Phase 1 — Data & evaluation harness: complete.** Exit criteria met: the harness
   reports mAP, recall at a fixed false-alarm rate, and geolocation error for a
   baseline RGB-only run.
-- **Phase 2 — Detection end-to-end: complete.** Weighted Box Fusion, detector
-  stubs, BoT-SORT tracking, WGS84 geodesic geolocation with DEM ray intersection,
-  and clue emission to Redis Streams. Deferred to later phases: real GMC from
+- **Phase 2 — Detection end-to-end: complete.** A sensor-agnostic pipeline
+  (only fitted sensors run a model; WBF only with two feeds), detector stubs,
+  BoT-SORT tracking, WGS84 geodesic geolocation with DEM ray intersection, and
+  clue emission to Redis Streams. Deferred to later phases: real GMC from
   frame registration, a real raster DEM source, and real detector models.
 - **Phase 3 — Minimal command plane: complete.** Orchestrator (routing table),
   case blackboard, and coordinator fusion. Exit criteria met: an operator query
@@ -65,7 +66,7 @@ src/
 │   └── test_evaluation.py   23 checks
 ├── perception/              Phase 2
 │   ├── fusion.py            Weighted Box Fusion (pixel-level, one frame)
-│   ├── detectors.py         YOLO11n / LiDAR stubs
+│   ├── detectors.py         YOLO11m / LiDAR stubs
 │   ├── tracking.py          BoT-SORT: Kalman, two-stage association, CMC
 │   ├── terrain.py           DEM sources (constant, lat/lon grid, JSON loader)
 │   ├── geolocation.py       WGS84 geodesy, DEM ray march, range selection
@@ -77,6 +78,7 @@ src/
 │   ├── orchestrator.py      dispatch loop; asks the router which agents to run
 │   ├── router.py            trigger/query → smallest agent set that answers it
 │   ├── demo.py              operator query → dispatch → picture
+│   ├── mock_drone_publisher.py  mock airframe → real pipeline → bus (dev feed)
 │   └── test_coordinator.py  85 checks
 └── agents/                  Phase 4-5 — the reasoning plane
     ├── llm.py               NVIDIA NIM over stdlib urllib (text + vision)
@@ -124,9 +126,13 @@ exactly one role, and a test fails if one is ever left unrouted:
 
 Only **detection** sources touch confidence.
 
-Full flow: `detectors → WBF → tracking → geolocation → bus → coordinator fusion
-→ picture`. Each stage takes and returns plain values or `ClueContract`, so
-stages can be tested and replaced one at a time.
+Full flow: `fitted detectors → [WBF] → tracking → geolocation → bus → coordinator
+fusion → picture`. Each stage takes and returns plain values or `ClueContract`,
+so stages can be tested and replaced one at a time. WBF is in brackets because
+it is conditional: the pipeline is sensor-agnostic, runs only the detectors for
+sensors actually fitted and delivering a frame, and fuses only when there is
+more than one feed to reconcile. Everything after the detectors takes boxes and
+does not care where they came from.
 
 Two different things are called fusion. `perception/fusion.py` merges *boxes*
 from two sensors on one frame; `coordinator/fusion.py` merges *clues* from any
@@ -152,6 +158,9 @@ python -m src.tuning.test_tuning            # Phase 9 checks
 python -m src.tuning.demo                   # run the study, baseline vs tuned
 python -m src.tuning.demo --reuse           # score the saved config without searching
 python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fixed conditions
+python -m src.coordinator.mock_drone_publisher          # mock airframe onto a live Redis
+python -m src.coordinator.mock_drone_publisher --check  # offline: the feed reaches a picture
+CASE_ID=case-mock-drone python -m src.coordinator.demo  # a coordinator joins that case
 ```
 
 ## Conventions
@@ -178,10 +187,12 @@ python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fix
   `ClueContract.detection_box()` enforces them where a clue must be located.
 - Mark deliberate shortcuts with a `ponytail:` comment naming the ceiling and the
   upgrade path.
-- The RGB detector is **YOLO11n** (Nano), swapped from YOLO11m for lower latency
-  during live demonstrations. Nano detects less than medium, so treat the Phase 1
-  recall numbers as having moved with it: re-measure before calling Nano the
-  operational model rather than the demo one.
+- The RGB detector is **YOLO11m** (Medium), everywhere and without exception —
+  code, docs and the Phase 1 baseline all name the same model. A smaller variant
+  was trialled for demo latency and dropped: what it gives up is recall on small,
+  distant and partly occluded subjects, which is the case a search exists for. If
+  latency on the airframe forces the question again, settle it with the harness
+  (mAP and recall@FAR, both models) rather than by swapping the name.
 - Repeated observations from one source never raise confidence. Correlated
   evidence combined as if independent manufactures false certainty. Confidence is
   the best observation *per source*, combined across *distinct* sources with a
