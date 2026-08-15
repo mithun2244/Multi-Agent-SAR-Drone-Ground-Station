@@ -4,8 +4,14 @@ Architecture, Phase 6: "call only the smallest set of agents that can answer the
 current question. In practice an agent runs only if its answer could change the
 next action."
 
-Seven agents on every operator query is seven times the API cost and seven times
-the exposure to a rate limit, to answer "what is the weather doing?".
+Every agent on every operator query is the full API cost and the full exposure to
+a rate limit, to answer "what is the weather doing?".
+
+The roster is the active data-gathering plane: Detection on the drone, and
+Weather, Path, Scene and Health on the ground. History and Interview are not in
+this build (docs/architecture.md, Phase 5) — their modules remain, and coordinator
+fusion still knows what to do with an advisory clue, so putting either back is a
+line in `ALL_AGENTS` and a scenario here.
 
 The bias is deliberately asymmetric
 -----------------------------------
@@ -33,14 +39,12 @@ from enum import Enum
 
 # Canonical dispatch order. Routing changes *which* agents run, never the order
 # they run in: scene needs detection to have published, health needs weather.
-ALL_AGENTS = ("interview", "detection", "weather", "health", "history", "path", "scene")
+ALL_AGENTS = ("detection", "weather", "health", "path", "scene")
 
 
 class RouteScenario(str, Enum):
     PERCEPTION_EVENT = "PERCEPTION_EVENT"            # drone airborne, a sighting
     WEATHER_QUERY = "WEATHER_QUERY"                  # "what is the outlook?"
-    WITNESS_INPUT = "WITNESS_INPUT"                  # a transcript arrived
-    HISTORICAL_QUERY = "HISTORICAL_QUERY"            # "anything like this before?"
     FULL_SEARCH_BRIEFING = "FULL_SEARCH_BRIEFING"    # everything, or unclear
 
 
@@ -50,8 +54,6 @@ AGENT_SETS = {
     # from, and the survival window stays at the coarse band table.
     RouteScenario.PERCEPTION_EVENT: ("detection", "weather", "scene", "health", "path"),
     RouteScenario.WEATHER_QUERY: ("weather",),
-    RouteScenario.WITNESS_INPUT: ("interview",),
-    RouteScenario.HISTORICAL_QUERY: ("history",),
     RouteScenario.FULL_SEARCH_BRIEFING: ALL_AGENTS,
 }
 
@@ -60,14 +62,6 @@ _SIGNALS = {
     RouteScenario.WEATHER_QUERY: (
         r"weather", r"forecast", r"temperature", r"wind", r"rain", r"snow",
         r"outlook", r"hypothermia", r"how cold", r"conditions",
-    ),
-    RouteScenario.WITNESS_INPUT: (
-        r"witness", r"statement", r"transcript", r"interview", r"caller",
-        r"someone saw", r"reported seeing", r"last seen by",
-    ),
-    RouteScenario.HISTORICAL_QUERY: (
-        r"past cases?", r"similar cases?", r"previous searches?", r"historical",
-        r"history", r"archive", r"precedent", r"happened before", r"comparable",
     ),
     RouteScenario.PERCEPTION_EVENT: (
         r"drone", r"airborne", r"sortie", r"detection", r"detected", r"sighting",
@@ -114,12 +108,7 @@ class ScenarioRouter:
         self.routed = {}
 
     def route(self, trigger=None, context=None):
-        """Route a trigger: a RouteScenario, a free-text query, or nothing.
-
-        `context` is the dispatch context. A transcript in it is treated as a
-        witness input on its own — a statement arriving *is* the trigger,
-        whatever words came with it.
-        """
+        """Route a trigger: a RouteScenario, a free-text query, or nothing."""
         context = context or {}
         route = self._classify(trigger, context)
         self.routed[route.scenario.value] = self.routed.get(route.scenario.value, 0) + 1
@@ -133,10 +122,6 @@ class ScenarioRouter:
         text = " ".join(filter(None, [text, str(context.get("query") or "")]))
 
         signals, matched = set(), []
-        if context.get("statement") or context.get("transcript"):
-            signals.add(RouteScenario.WITNESS_INPUT)
-            matched.append("transcript in context")
-
         for pattern in _FULL_PATTERNS:
             hit = pattern.search(text)
             if hit:

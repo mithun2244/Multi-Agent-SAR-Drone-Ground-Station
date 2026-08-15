@@ -52,7 +52,11 @@ class ClueContract(BaseModel):
     agent_metadata: Dict[str, Any] = Field(default_factory=dict)
 ```
 
-`AgentSource` covers the two perception producers and the six reasoning agents.
+`AgentSource` covers the perception producers and every ground-side agent. Two of
+them, `HISTORY_RAG` and `INTERVIEW_LLM`, are out of the active pipeline
+(docs/architecture.md, Phase 5) and stay in the enum: a source that has ever
+published is part of the schema's history, and removing it would make an archived
+clue unreadable.
 `agent_metadata` is the per-agent escape hatch — anything not common to all
 producers (track IDs, LiDAR range, model version, retrieval hits) goes there
 rather than widening the shared contract.
@@ -68,7 +72,7 @@ whose clues get merged by Weighted Box Fusion, and fusion can only pair detectio
 that agree on the frame they came from. A typed field gives both detectors one
 spelling of that key instead of two conventions that drift apart. Meanwhile a
 weather forecast observes no frame and detects no class, so `WEATHER_API` (Phase 4)
-and the reasoning agents simply leave both `None` and validate cleanly.
+and the other data-gathering agents simply leave both `None` and validate cleanly.
 
 | Field | Set by | Meaning |
 |---|---|---|
