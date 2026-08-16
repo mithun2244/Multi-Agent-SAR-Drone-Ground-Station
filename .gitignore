@@ -33,7 +33,30 @@ htmlcov/
 # --- raw data and logs -------------------------------------------------
 # Recorded RGB/LiDAR footage, telemetry, DEM tiles and bus dumps. These are
 # large, often personally identifying, and never belong in the repository.
-data/
+#
+# data/ holds the scripts that fetch and prepare all of it, so it is an
+# allow-list rather than a blanket ignore: the scripts and their docs are
+# tracked, everything they download or generate is not. The `data/**/` line is
+# required — git will not re-include a file whose parent directory is excluded.
+data/**
+!data/**/
+!data/**/*.py
+!data/**/*.sh
+!data/**/*.md
+!data/**/.gitkeep
+
+# Spelled out as well, because these are the ones that would hurt: two gigabytes
+# of VisDrone, a range image per LiDAR sweep, or a 40 MB checkpoint.
+data/**/*.pt
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+
+# Trained weights. config/weights/ is committed empty; what goes in it is not —
+# a checkpoint worth keeping belongs in a release.
+config/weights/*
+!config/weights/.gitkeep
+
 raw/
 recordings/
 footage/
