@@ -6,7 +6,7 @@ finds; and a four-stage decision chain turns that picture into one validated
 brief — who is out there, where, how dangerous it is, and what to do next.
 
 Built in phases, each with its own exit criteria and test suite.
-**408 automated checks** across eight suites, no network required.
+**409 automated checks** across eight suites, no network required.
 
 ```
 ┌ PERCEPTION ── on the drone, at frame rate ─────────────────────────────────┐
@@ -393,7 +393,7 @@ python -m src.tuning.demo              # Optuna study, baseline vs tuned
 ```bash
 python -m src.evaluation.test_evaluation     #  23 checks
 python -m src.perception.test_perception     #  80 checks
-python -m src.coordinator.test_coordinator   # 104 checks
+python -m src.coordinator.test_coordinator   # 105 checks
 python -m src.agents.test_agents             #  63 checks
 python -m src.guardrails.test_guardrails     #  51 checks
 python -m src.guardrails.test_adversarial    #  28 crafted attacks

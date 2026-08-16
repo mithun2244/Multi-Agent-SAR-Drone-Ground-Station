@@ -76,8 +76,16 @@ WEATHER_RADIUS_M = 5_000.0
 URGENCY_HORIZON_H = 24.0
 
 # How much urgency each visible hazard adds, and the ceiling it can reach.
+#
+# The ceiling sits in the lower half of the scale, deliberately clear of what a
+# closing survival window reaches (0.9+). A hazard is something a model *saw* in
+# a picture; a window is computed from a measured temperature and a time. Letting
+# two hazards in a description rival a real one — which is what a 0.9 ceiling did
+# — put a sheltered subject ahead of a hypothermic one, and the critic caught it
+# as a ranking error. Same principle as `select_range`: an inference does not get
+# to outrank a measurement.
 HAZARD_URGENCY_STEP = 0.3
-HAZARD_URGENCY_CAP = 0.9
+HAZARD_URGENCY_CAP = 0.45
 
 _MAX_LINEAGE = 32
 

@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -155,13 +156,62 @@ def build_weather_agent(bus, case_id, live=False):
     return handler
 
 
-STUB_SCENE = json.dumps({
-    "description": "Figure prone on open scree beside a meltwater channel.",
-    "terrain": "loose scree, no path",
-    "visibility": "low cloud, failing light",
-    "hazards": ["fast water", "loose rock"],
-    "subject_state": "not moving",
-})
+# One canned reply for every frame gave both subjects an identical description
+# and identical hazards, so hazard urgency was the same number on every target —
+# it cancelled in the ranking while still displacing the weather signal, and the
+# critic duly scored Scene as *hurting* the picture. That was an artefact of the
+# stub, not of the agent: a real VLM does not describe two hillsides the same way.
+#
+# Two scenes with different hazards, assigned per prompt. The prompt carries the
+# detection box, which is the only thing that differs between two subjects in one
+# sortie, so each target keeps its own description across every frame it appears
+# in. Which subject draws which scene is first-seen order and means nothing
+# physically — the stub cannot see where anyone is standing. That is what real
+# footage fixes.
+STUB_SCENES = (
+    json.dumps({
+        "description": "Figure prone on open scree beside a meltwater channel.",
+        "terrain": "loose scree, no path",
+        "visibility": "low cloud, failing light",
+        "hazards": ["fast water", "loose rock"],
+        "subject_state": "not moving",
+    }),
+    json.dumps({
+        "description": "Figure sitting upright in the lee of a boulder field.",
+        "terrain": "sheltered hollow, boulders",
+        "visibility": "clearing, long shadows",
+        "hazards": ["unstable boulders"],
+        "subject_state": "moving, waved at the drone",
+    }),
+)
+
+
+_BOX_RE = re.compile(r"box \[(-?\d+), (-?\d+), (-?\d+), (-?\d+)\]")
+
+
+def _scene_completer(replies=STUB_SCENES, same_subject_px=200.0):
+    """Fixed replies that differ per subject, keyed on where the box is.
+
+    Not on the prompt text: detector jitter moves the box a few pixels every
+    frame, so no two prompts are ever identical and keying on them would flicker
+    a subject's description frame to frame. The two subjects are most of a frame
+    apart, so anything within `same_subject_px` of a box already seen is the same
+    subject and gets the same scene back.
+    """
+    anchors = []
+
+    def complete(prompt, image=None, mime_type="image/jpeg"):
+        match = _BOX_RE.search(prompt)
+        if match is None:
+            return replies[0]
+        centre = (int(match.group(1)) + int(match.group(3))) / 2.0
+        for x, index in anchors:
+            if abs(centre - x) <= same_subject_px:
+                return replies[index]
+        anchors.append((centre, len(anchors) % len(replies)))
+        return replies[anchors[-1][1]]
+
+    return complete
 
 
 def build_path_agent(bus, case_id, dem, complete, pls, elapsed_hours):
@@ -321,7 +371,7 @@ def build_case(live_weather=False):
         return None if completer is None else cache.wrap(completer)
 
     complete = wrap(client.complete if client else None)
-    describe = wrap(client.complete if client else static_completer(STUB_SCENE))
+    describe = wrap(client.complete if client else _scene_completer())
     health_complete = wrap(client.complete if client else static_completer(STUB_HEALTH))
 
     profile = SubjectProfile(age_years=68, clothing="red shell jacket and jeans",

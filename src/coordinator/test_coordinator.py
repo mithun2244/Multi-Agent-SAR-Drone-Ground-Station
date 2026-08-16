@@ -49,7 +49,7 @@ from .decision import (
     recommend,
     risk,
 )
-from .fusion import CoordinatorFusion, Picture
+from .fusion import HAZARD_URGENCY_CAP, CoordinatorFusion, Picture
 from .orchestrator import ALL_AGENTS, Dispatch, Orchestrator, Scenario
 from .router import AGENT_SETS, Route, RouteScenario, ScenarioRouter
 
@@ -845,13 +845,31 @@ def test_hazard_urgency_is_capped_and_combined_by_max():
     bus.publish(_clue(track_id="1", conf=0.7, geo=_SITE))
     bus.publish(_scene(track_id="1", hazards=["a", "b", "c", "d", "e", "f"]))
     hazards_only = fusion.refresh("case-0000").targets[0].urgency
-    assert hazards_only <= 0.9, "a hazard is never on its own a reason to drop everything"
+    assert hazards_only == HAZARD_URGENCY_CAP, (
+        "a hazard is never on its own a reason to drop everything"
+    )
 
     bus.publish(_weather(risk=True, window=1))
     both = fusion.refresh("case-0000").targets[0].urgency
     weather_only = _urgency_for(window=1)
     assert both == max(hazards_only, weather_only), "combined by max"
     assert both < hazards_only + weather_only, "not summed"
+
+
+def test_a_description_never_outranks_a_measured_window():
+    """Six visible hazards, the most a description can ever claim, must still sit
+    below a closing survival window — which is computed from a measured
+    temperature and a time, not seen in a picture. Same principle as
+    `select_range`: an inference does not outrank a measurement."""
+    bus, _, fusion = _wire()
+    bus.publish(_clue(track_id="1", conf=0.7, geo=_SITE))
+    bus.publish(_scene(track_id="1", hazards=["a", "b", "c", "d", "e", "f"]))
+    most_hazards = fusion.refresh("case-0000").targets[0].urgency
+
+    assert most_hazards == HAZARD_URGENCY_CAP < _urgency_for(window=1)
+    # And the margin is wide enough that a confidence difference cannot flip it:
+    # 0.45 against 0.958 is not a tie a stronger detection can break.
+    assert _urgency_for(window=1) - most_hazards > 0.4
 
 
 def test_path_sectors_become_case_context_not_targets():

@@ -86,7 +86,7 @@ src/
 │   ├── router.py            trigger/query → smallest agent set that answers it
 │   ├── demo.py              operator query → dispatch → picture → brief
 │   ├── mock_drone_publisher.py  mock airframe → real pipeline → bus (dev feed)
-│   └── test_coordinator.py  104 checks
+│   └── test_coordinator.py  105 checks
 └── agents/                  Phase 4-5 — the data-gathering plane
     ├── llm.py               NVIDIA NIM over stdlib urllib (text + vision)
     ├── weather.py           Open-Meteo, wind chill, hypothermia risk + window
