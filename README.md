@@ -329,6 +329,7 @@ src/
 ├── geometry.py              IoU and geodesic distance, shared by every plane
 ├── bus.py                   RedisBus over Redis Streams (+ FakeRedisStreams)
 ├── contracts/clue.py        ClueContract — one schema for every agent
+├── utils/seed.py            set_global_seed, for torch/numpy under ultralytics
 ├── evaluation/              Phase 1 — mAP, recall@FAR, geolocation error
 ├── perception/              Phase 2 — WBF, BoT-SORT, DEM geolocation, agent
 ├── coordinator/             Phase 3 — blackboard, fusion, router, orchestrator
@@ -341,6 +342,9 @@ src/
 └── tuning/                  Phase 9 — params, scenario, Optuna objective
                              + live_system_check.py — the one online script
 config/tuned_params.json     the tuned operating point
+config/weights/              trained weights land here; committed empty
+data/                        dataset scripts — see data/README.md
+train_perception.py          YOLO11m on VisDrone, configured as a smoke run
 docs/architecture.md         the design this was built from
 ```
 
@@ -388,6 +392,48 @@ python -m src.critic.demo              # fly a case, resolve it, score it
 python -m src.tuning.demo              # Optuna study, baseline vs tuned
 ```
 
+### Reproduce a run
+
+Every entry point with randomness takes `--seed`:
+
+```bash
+python -m src.coordinator.demo --seed 42       # both stub detectors and the Path model
+python -m src.coordinator.mock_drone_publisher --seed 42
+python -m src.tuning.demo --seed 42            # the TPE sampler; the folds stay fixed
+python -m src.tuning.scenario --seed 42        # one repeatable sortie
+python -m src.agents.path --seed 42            # Monte-Carlo sectors on their own
+python -m src.evaluation.harness --seed 42     # the split and the mock detector
+python train_perception.py --seed 42           # torch, numpy and the training run
+```
+
+**Randomness here is injected, never global.** Every RNG in `src/` is an
+isolated `random.Random(seed)` — the stub detectors, the Path Monte-Carlo, the
+dataset splits, the mock drone feed — so a fixed validation split means the same
+thing regardless of what else the process did first, and a result never depends
+on module import order. `src/utils/seed.py` exists for the libraries this
+project does *not* own, where a global generator is the only handle there is:
+torch and numpy under ultralytics during training. It seeds what is installed,
+reports what it actually reached, and treats an absent numpy or torch as the
+normal case rather than an error.
+
+So each `--seed` does two things — sets the global generators *and* threads the
+number into the explicit seed the code already takes. A flag that only did the
+first would be decorative everywhere except training.
+
+Three deliberate exceptions:
+
+- **The tuning folds are never reseeded.** They are the fixed validation set
+  every configuration is judged against; moving them per run would make two
+  studies incomparable, which is what fixing the splits in Phase 1 prevents.
+- **`coordinator.demo` defaults to its shipped per-component seeds**, not to 42,
+  so a plain run still reproduces the numbers quoted here. `--seed` asks for a
+  different draw of the same scenario — which is how you check a result was not
+  a fluke.
+- **`mock_drone_publisher --check` keeps its own pinned seed** and says so if you
+  pass another. Its thresholds are known answers for one draw of the detector
+  noise, and a self-check quietly run on a seed it was not calibrated for is
+  worse than no self-check.
+
 ### Run the tests
 
 ```bash
@@ -399,6 +445,8 @@ python -m src.guardrails.test_guardrails     #  51 checks
 python -m src.guardrails.test_adversarial    #  28 crafted attacks
 python -m src.critic.test_critic             #  34 checks
 python -m src.tuning.test_tuning             #  25 checks
+
+python -m src.utils.seed --selfcheck         # what a global seed does and does not reach
 ```
 
 ### Go live
