@@ -182,7 +182,9 @@ python -m src.agents.path --seed 42         # Monte-Carlo sectors, reproducible
 python -m src.coordinator.demo --seed 42    # one draw of the stub noise, reproducible
 python -m src.coordinator.mock_drone_publisher --seed 42
 python -m src.utils.seed --selfcheck        # what a global seed does and does not reach
-python train_perception.py --seed 42        # seeds torch, numpy and the run itself
+python train_perception.py --mode rgb --epochs 50 --seed 42   # fine-tune, then score it
+python train_perception.py --mode lidar     # skips gracefully until there is LiDAR data
+python train_perception.py --selfcheck      # the wiring, without a dataset or a GPU
 python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fixed conditions
 python -m src.coordinator.mock_drone_publisher          # mock airframe onto a live Redis
 python -m src.coordinator.mock_drone_publisher --check  # offline: the feed reaches a picture
