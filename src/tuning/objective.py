@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 import optuna
 
+from ..coordinator.fusion import HAZARD_URGENCY_CAP
 from ..critic.critic import Critic
 from .params import TunedParams
 from .scenario import run
@@ -76,7 +77,13 @@ def suggest(trial, base=None):
         # ranking
         urgency_weight=trial.suggest_float("urgency_weight", 0.0, 2.0),
         sector_weight=trial.suggest_float("sector_weight", 0.0, 1.5),
-        hazard_urgency_step=trial.suggest_float("hazard_urgency_step", 0.0, 0.6),
+        # Bounded by the cap itself, not by a hand-picked number that can drift
+        # away from it. A step above the cap saturates on the first hazard, so
+        # the whole range beyond it is one behaviour wearing different values —
+        # the optimiser cannot tell those trials apart and picks among them by
+        # noise, which is how a step of 0.546 got persisted against a 0.9 cap.
+        hazard_urgency_step=trial.suggest_float("hazard_urgency_step",
+                                                0.0, HAZARD_URGENCY_CAP),
         # health guardrail — the ceiling is bounded above the floor, so the
         # clamp can never invert into a range that admits nothing.
         health_multiplier_floor=floor,
