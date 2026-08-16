@@ -175,6 +175,8 @@ python -m src.tuning.demo --reuse           # score the saved config without sea
 python -m src.tuning.demo --seed 42         # pin the TPE sampler; folds stay fixed
 python -m src.tuning.scenario --seed 42     # one repeatable sortie
 python -m src.agents.path --seed 42         # Monte-Carlo sectors, reproducible
+python -m src.coordinator.demo --seed 42    # one draw of the stub noise, reproducible
+python -m src.coordinator.mock_drone_publisher --seed 42
 python -m src.utils.seed --selfcheck        # what a global seed does and does not reach
 python train_perception.py --seed 42        # seeds torch, numpy and the run itself
 python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fixed conditions

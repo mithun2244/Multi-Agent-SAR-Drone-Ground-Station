@@ -8,6 +8,7 @@ box fusion, BoT-SORT, geolocation — so what lands on Redis Streams is a
 already know how to consume.
 
     python -m src.coordinator.mock_drone_publisher
+    python -m src.coordinator.mock_drone_publisher --seed 42
     CASE_ID=case-mock-drone python -m src.coordinator.mock_drone_publisher
     python -m src.coordinator.mock_drone_publisher --check   # offline self-check
 
@@ -46,6 +47,7 @@ import time
 from ..bus import FakeRedisStreams, RedisBus
 from ..guardrails.audit import AuditLog
 from ..guardrails.provenance import ProvenanceRegistry
+from ..utils.seed import DEFAULT_SEED, set_global_seed
 from ..perception.agent import DetectionAgent
 from ..perception.detectors import Target, lidar_stub, yolo11m_stub
 from ..perception.geolocation import (
@@ -270,7 +272,14 @@ def _picture(picture):
             f"conf {top.confidence:.3f} prio {top.priority:.3f} at {where}")
 
 
-def _fly(ticks, use_gmc, quiet=False, sensors=SENSORS):
+# `check()` is a known-answer test — its thresholds (a fix inside 60 m, nothing
+# trackable without GMC) are calibrated for this draw of the detector noise, so
+# it keeps its own seed whatever --seed says. A self-check that only passes on
+# one seed and is quietly run on another is worse than no self-check.
+CHECK_SEED = 7
+
+
+def _fly(ticks, use_gmc, quiet=False, sensors=SENSORS, seed=CHECK_SEED):
     """One offline flight, wired to a coordinator. Returns (agent, fusion, case_id)."""
     bus = RedisBus(FakeRedisStreams())
     blackboard = Blackboard()
@@ -280,7 +289,7 @@ def _fly(ticks, use_gmc, quiet=False, sensors=SENSORS):
         provenance=ProvenanceRegistry(devices={DRONE_ID}), audit=AuditLog(),
     )
     agent = run(bus, case.case_id, interval=0.0, ticks=ticks, use_gmc=use_gmc, quiet=quiet,
-                sensors=sensors)
+                sensors=sensors, seed=seed)
     return agent, fusion, case.case_id
 
 
@@ -335,6 +344,9 @@ def _stream(fusion, case_id):
 
 if __name__ == "__main__":
     if "--check" in sys.argv:
+        if "--seed" in sys.argv:
+            print(f"  note: --check runs on its pinned seed {CHECK_SEED}; "
+                  f"its thresholds are known answers for that draw")
         check()
     else:
         # What is fitted to the airframe. One sensor is the DJI case: only that
@@ -344,6 +356,11 @@ if __name__ == "__main__":
             sensors = ("rgb",)
         elif "--lidar-only" in sys.argv:
             sensors = ("lidar",)
+
+        seed = DEFAULT_SEED
+        if "--seed" in sys.argv:
+            seed = int(sys.argv[sys.argv.index("--seed") + 1])
+        set_global_seed(seed)
 
         case_id = os.environ.get("CASE_ID", DEFAULT_CASE_ID)
         url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -363,10 +380,11 @@ if __name__ == "__main__":
         print(f"\n  redis:  {url}")
         print(f"  case:   {case_id}  ->  stream clues:{case_id}")
         print(f"  drone:  {DRONE_ID} loitering at {HOME[0]:.5f}, {HOME[1]:.5f}")
+        print(f"  seed:   {seed}")
         print(f"  fitted: {', '.join(sensors)}"
               f"{' (WBF runs)' if len(sensors) > 1 else ' (single sensor, no fusion)'}")
         print(f"  every {INTERVAL_SECONDS}s - ctrl-c to stop\n")
         try:
-            run(bus, case_id, fusion=fusion, sensors=sensors)
+            run(bus, case_id, fusion=fusion, sensors=sensors, seed=seed)
         except KeyboardInterrupt:
             print("\nstopped")

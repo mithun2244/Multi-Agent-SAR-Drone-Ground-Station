@@ -13,6 +13,7 @@ are fixed so the demo is deterministic and works offline.
 
     python -m src.coordinator.demo
     python -m src.coordinator.demo --live-weather
+    python -m src.coordinator.demo --seed 42
     REDIS_URL=redis://localhost:6379/0 python -m src.coordinator.demo
 """
 from dotenv import load_dotenv
@@ -35,6 +36,7 @@ from ..guardrails.audit import AuditLog
 from ..guardrails.cache import ResponseCache
 from ..guardrails.provenance import OPEN_METEO_ENDPOINT, TAG_TRACK, ProvenanceRegistry
 from ..tuning.params import CONFIG_PATH, load_params
+from ..utils.seed import set_global_seed
 from ..perception.agent import DetectionAgent
 from ..perception.detectors import Target, lidar_stub, yolo11m_stub
 from ..perception.geolocation import (
@@ -68,7 +70,14 @@ def _search_area_dem():
     )
 
 
-def build_detection_agent(bus, case_id):
+# The seeds this demo shipped with. `--seed` overrides them together; left
+# alone, the demo reproduces the run its output is quoted from. Making 42 the
+# default here would have silently changed every number in the README.
+DETECTOR_SEED = 11
+PATH_SEED = 4
+
+
+def build_detection_agent(bus, case_id, seed=DETECTOR_SEED):
     """The Phase 2 agent, wrapped as something the orchestrator can dispatch."""
     dem = _search_area_dem()
     camera = Camera(fx=1000.0, fy=1000.0, cx=640.0, cy=360.0)
@@ -88,8 +97,8 @@ def build_detection_agent(bus, case_id):
 
     agent = DetectionAgent(bus, case_id, camera, dem=dem, tracker=BoTSORT(min_hits=3),
                            device_id=DRONE_ID)
-    rgb = yolo11m_stub(seed=11, recall=0.95, device_id=DRONE_ID)
-    lidar = lidar_stub(seed=11, recall=0.8, device_id=DRONE_ID)
+    rgb = yolo11m_stub(seed=seed, recall=0.95, device_id=DRONE_ID)
+    lidar = lidar_stub(seed=seed, recall=0.8, device_id=DRONE_ID)
     sortie = {"frame": 0}
 
     def handler(case_id, context):
@@ -214,10 +223,10 @@ def _scene_completer(replies=STUB_SCENES, same_subject_px=200.0):
     return complete
 
 
-def build_path_agent(bus, case_id, dem, complete, pls, elapsed_hours):
+def build_path_agent(bus, case_id, dem, complete, pls, elapsed_hours, seed=PATH_SEED):
     """The Monte-Carlo sector model, with the LLM writing prose over its output."""
     agent = PathAgent(bus, case_id, dem=dem, model=PathModel(walkers=800, top_k=4),
-                      complete=complete, seed=4)
+                      complete=complete, seed=seed)
 
     def handler(case_id, context):
         clue = agent.project(pls, context.get("elapsed_hours", elapsed_hours),
@@ -317,11 +326,16 @@ class Wiring:
     agents: dict = field(default_factory=dict)
 
 
-def build_case(live_weather=False):
+def build_case(live_weather=False, seed=None):
     """Stand up a fully wired case: bus, guards, agents, orchestrator.
 
     Shared by this demo and the critic's, so both exercise the same system
     rather than two subtly different ones.
+
+    `seed=None` keeps the per-component seeds this demo shipped with, so the
+    numbers quoted in the README and the critic demo's NDCG stay reproducible.
+    An integer overrides every stub at once — a different draw of the same
+    scenario, which is what you want when checking a result was not a fluke.
     """
     url = os.environ.get("REDIS_URL")
     if url:
@@ -379,7 +393,8 @@ def build_case(live_weather=False):
     health_bounds = dict(multiplier_floor=params.health_multiplier_floor,
                          multiplier_ceiling=params.health_multiplier_ceiling)
 
-    path_handler, _ = build_path_agent(bus, case.case_id, dem, complete, POINT_LAST_SEEN, 2.0)
+    path_handler, _ = build_path_agent(bus, case.case_id, dem, complete, POINT_LAST_SEEN, 2.0,
+                                       seed=PATH_SEED if seed is None else seed)
     scene_handler, scene = build_scene_agent(bus, case.case_id, describe, stream, registry)
     health_handler, health = build_health_agent(bus, case.case_id, health_complete, stream,
                                                 profile, registry, **health_bounds)
@@ -388,7 +403,8 @@ def build_case(live_weather=False):
     # Weather, Path, Scene and Health on the ground. `ALL_AGENTS` in router.py is
     # the roster, and a route naming an unregistered agent fails loudly, so these
     # two lists cannot drift apart unnoticed.
-    orchestrator.register("detection", build_detection_agent(bus, case.case_id))
+    orchestrator.register("detection", build_detection_agent(
+        bus, case.case_id, seed=DETECTOR_SEED if seed is None else seed))
     orchestrator.register("weather", build_weather_agent(bus, case.case_id, live=live_weather))
     orchestrator.register("health", health_handler)
     orchestrator.register("path", path_handler)
@@ -405,8 +421,14 @@ def build_case(live_weather=False):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     live_weather = "--live-weather" in argv
+    seed = None
+    if "--seed" in argv:
+        seed = int(argv[argv.index("--seed") + 1])
+        # Sets the global generators as well as the stubs. Nothing in src/ reads
+        # a global RNG, but the demo may reach a library that does.
+        set_global_seed(seed)
 
-    wiring = build_case(live_weather=live_weather)
+    wiring = build_case(live_weather=live_weather, seed=seed)
     orchestrator, fusion, case, bus = (wiring.orchestrator, wiring.fusion,
                                        wiring.case, wiring.bus)
     registry, audit, cache, dem = (wiring.registry, wiring.audit,
