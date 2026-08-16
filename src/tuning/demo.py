@@ -3,6 +3,7 @@
     python -m src.tuning.demo                 # run the study, save, compare
     python -m src.tuning.demo --trials 200    # search harder
     python -m src.tuning.demo --reuse         # score the saved config, no search
+    python -m src.tuning.demo --seed 42       # pin the sampler's own randomness
 
 Runs the shipped defaults and the tuned configuration over the same folds and
 prints them side by side: mAP from the Phase 1 harness, and recall, NDCG,
@@ -23,6 +24,7 @@ import time
 
 from ..critic.critic import Critic
 from ..evaluation.metrics import evaluate as evaluate_detections
+from ..utils.seed import DEFAULT_SEED, describe, set_global_seed
 from .objective import DEFAULT_FOLDS, run_study, score
 from .params import CONFIG_PATH, TunedParams
 from .scenario import run
@@ -79,9 +81,18 @@ def main(argv=None):
     trials = 60
     if "--trials" in argv:
         trials = int(argv[argv.index("--trials") + 1])
+    seed = DEFAULT_SEED
+    if "--seed" in argv:
+        seed = int(argv[argv.index("--seed") + 1])
 
     baseline = TunedParams()
-    print(f"\n  folds {list(DEFAULT_FOLDS)}   scenario: 3 subjects (1 faint casualty), "
+    # Seeds the TPE sampler, so the same --seed searches the space in the same
+    # order and lands on the same configuration. The *folds* are deliberately
+    # not reseeded: they are the fixed validation set every configuration is
+    # judged against, and moving them would make two studies incomparable —
+    # which is the whole reason Phase 1 fixed the splits in the first place.
+    print(f"\n  {describe(set_global_seed(seed), seed)}")
+    print(f"  folds {list(DEFAULT_FOLDS)}   scenario: 3 subjects (1 faint casualty), "
           f"2 RGB-only decoys")
 
     if reuse:
@@ -90,7 +101,7 @@ def main(argv=None):
     else:
         print(f"  running Optuna TPE study, {trials} trials …")
         started = time.time()
-        study, tuned, fitness = run_study(n_trials=trials)
+        study, tuned, fitness = run_study(n_trials=trials, seed=seed)
         print(f"  study done in {time.time() - started:.1f}s   "
               f"best trial {study.best_trial.number} of {len(study.trials)}   "
               f"loss {fitness.loss:.4f}")

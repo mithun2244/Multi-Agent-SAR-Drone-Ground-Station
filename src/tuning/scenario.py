@@ -241,3 +241,42 @@ def run(params=None, seed=0, frames=6, case_id="tune-0000", missing_hours=2.0):
         truth_boxes=truth_boxes,
         frames=frames,
     )
+
+
+def main(argv=None):
+    """Fly one scenario and report what it produced.
+
+    `run(seed=...)` already seeds every stub detector explicitly — that is what
+    makes a fold reproducible. `--seed` sets that *and* the global generators,
+    so the whole process is pinned, not just the parts this module owns.
+
+        python -m src.tuning.scenario --seed 42
+        python -m src.tuning.scenario --seed 42 --frames 8
+    """
+    import argparse
+
+    from ..utils.seed import DEFAULT_SEED, describe, set_global_seed
+
+    parser = argparse.ArgumentParser(description="One repeatable tuning scenario")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--frames", type=int, default=6)
+    args = parser.parse_args(argv)
+
+    print(f"  {describe(set_global_seed(args.seed), args.seed)}")
+    result = run(seed=args.seed, frames=args.frames)
+
+    print(f"  {args.frames} frame(s), {len(result.truth_boxes)} ground-truth box(es), "
+          f"{len(result.raw_detections)} raw detection(s)")
+    print(f"  {len(result.picture.targets)} target(s) in the picture, "
+          f"{len(result.outcome.subjects)} subject(s) actually out there")
+    for rank, target in enumerate(result.picture.targets, 1):
+        where = (f"{target.latitude:.5f}, {target.longitude:.5f}"
+                 if target.located else "NOT LOCATED")
+        print(f"    {rank}  {target.target_id:<4} conf {target.confidence:.3f}  "
+              f"urg {target.urgency:.2f}  {where}")
+    print(f"\n  re-run with the same --seed for an identical sortie\n")
+    return result
+
+
+if __name__ == "__main__":
+    main()

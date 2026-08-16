@@ -306,3 +306,47 @@ class PathAgent:
                 "path_model": asdict(self.model),
             },
         )
+
+
+def main(argv=None):
+    """Project sectors from a point last seen, and print them.
+
+    The Monte-Carlo is the only randomness in the reasoning plane, and it is
+    already seeded explicitly — `simulate_sectors(..., seed=N)`. `--seed` sets
+    both that and the global generators, so a projection quoted in a briefing
+    can be reproduced exactly.
+
+        python -m src.agents.path --seed 42
+        python -m src.agents.path --seed 42 --walkers 2000 --hours 6
+    """
+    import argparse
+
+    from ..utils.seed import DEFAULT_SEED, describe, set_global_seed
+
+    parser = argparse.ArgumentParser(description="Monte-Carlo search sectors")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--walkers", type=int, default=1500)
+    parser.add_argument("--hours", type=float, default=4.0,
+                        help="hours elapsed since the point last seen")
+    parser.add_argument("--pls", type=float, nargs=2, default=[46.8316, 8.2271],
+                        metavar=("LAT", "LON"))
+    args = parser.parse_args(argv)
+
+    print(f"  {describe(set_global_seed(args.seed), args.seed)}")
+
+    model = PathModel(walkers=args.walkers)
+    sectors = simulate_sectors(tuple(args.pls), args.hours, model=model, seed=args.seed)
+
+    print(f"  {args.walkers} walkers, {args.hours} h since last seen at "
+          f"{args.pls[0]:.5f}, {args.pls[1]:.5f}")
+    print(f"\n  {'rank':<6}{'prob':<8}{'distance':<11}{'bearing':<10}position")
+    for sector in sectors:
+        print(f"  {sector.rank:<6}{sector.probability:<8.3f}"
+              f"{sector.distance_m:<11.0f}{sector.bearing_deg:<10.0f}"
+              f"{sector.latitude:.5f}, {sector.longitude:.5f}")
+    print(f"\n  re-run with the same --seed for an identical projection\n")
+    return sectors
+
+
+if __name__ == "__main__":
+    main()

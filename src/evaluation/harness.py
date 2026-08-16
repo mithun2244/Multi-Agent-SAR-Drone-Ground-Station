@@ -12,6 +12,7 @@ Run it:
 import argparse
 import json
 
+from ..utils.seed import set_global_seed
 from .dataset import Detection, build_splits, load_clues, load_split, mock_rgb_detector
 from .metrics import evaluate
 
@@ -113,6 +114,11 @@ def main(argv=None):
                    help="tolerated false alarms per frame")
     p.add_argument("--json", action="store_true", help="emit raw results as JSON")
     args = p.parse_args(argv)
+
+    # The harness already threads --seed into the split and the mock detector,
+    # which is what actually decides the numbers below. This pins the global
+    # generators as well, so nothing a library does underneath can wander.
+    set_global_seed(args.seed)
 
     if args.data:
         split = load_split(args.data, args.split)

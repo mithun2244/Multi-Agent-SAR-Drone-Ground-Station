@@ -1,6 +1,7 @@
 """Train the RGB detector: YOLO11m on VisDrone, configured as a fast smoke run.
 
     python train_perception.py
+    python train_perception.py --seed 42
 
 This is the "real detector weights" line item Phase 2 deferred — the stub in
 `src/perception/detectors.py` models the *shape* of a detector's behaviour, and
@@ -28,7 +29,11 @@ Whatever this produces is measured by the Phase 1 harness before it is believed:
     python -m src.evaluation.harness
 """
 
+import argparse
+
 from ultralytics import YOLO
+
+from src.utils.seed import DEFAULT_SEED, describe, set_global_seed
 
 MODEL = "yolo11m.pt"          # Medium, per the standardised RGB detector
 DATA = "VisDrone.yaml"        # ultralytics' config; downloads on first use
@@ -37,7 +42,18 @@ DATA = "VisDrone.yaml"        # ultralytics' config; downloads on first use
 CLASSES = [0, 1, 3]
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED,
+                        help="seeds torch, numpy and the training run itself")
+    args = parser.parse_args(argv)
+
+    # This is the one place a global seed does real work: weight initialisation,
+    # shuffling, augmentation and dropout all draw from torch's global generator,
+    # which is not ours to inject into. `seed=` below covers ultralytics' own
+    # use; this covers everything underneath it.
+    print(f"  {describe(set_global_seed(args.seed), args.seed)}")
+
     model = YOLO(MODEL)
     results = model.train(
         data=DATA,
@@ -46,6 +62,7 @@ def main():
         imgsz=640,
         fraction=0.1,         # a tenth of the training set: smoke run, not a recipe
         classes=CLASSES,
+        seed=args.seed,
         # No `project=`: ultralytics already roots runs at its own runs_dir, and
         # a relative project nests under it — the first pass landed in
         # runs/detect/runs/perception/. `name` alone is enough.

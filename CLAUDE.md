@@ -63,6 +63,8 @@ than the simulator.
 src/
 ├── geometry.py              iou(), shared by perception and evaluation
 ├── bus.py                   RedisBus over Redis Streams (+ FakeRedisStreams)
+├── utils/
+│   └── seed.py              set_global_seed() for torch/numpy under ultralytics
 ├── contracts/
 │   └── clue.py              ClueContract — single source of truth for the schema
 ├── evaluation/              Phase 1 harness
@@ -170,6 +172,11 @@ python -m src.critic.demo                   # fly a case, resolve it, score it
 python -m src.tuning.test_tuning            # Phase 9 checks
 python -m src.tuning.demo                   # run the study, baseline vs tuned
 python -m src.tuning.demo --reuse           # score the saved config without searching
+python -m src.tuning.demo --seed 42         # pin the TPE sampler; folds stay fixed
+python -m src.tuning.scenario --seed 42     # one repeatable sortie
+python -m src.agents.path --seed 42         # Monte-Carlo sectors, reproducible
+python -m src.utils.seed --selfcheck        # what a global seed does and does not reach
+python train_perception.py --seed 42        # seeds torch, numpy and the run itself
 python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fixed conditions
 python -m src.coordinator.mock_drone_publisher          # mock airframe onto a live Redis
 python -m src.coordinator.mock_drone_publisher --check  # offline: the feed reaches a picture
@@ -307,6 +314,16 @@ CASE_ID=case-mock-drone python -m src.coordinator.demo  # a coordinator joins th
   noise has learned nothing.
 - Tuning results come from a **simulator**: real pipeline, stubbed imagery. They
   are a starting point for a run against real recordings, not a substitute.
+- Randomness is **injected, never global**. Every RNG in `src/` is an isolated
+  `random.Random(seed)`, so a fixed split means the same thing whatever else the
+  process did first. `utils/seed.set_global_seed` exists for the libraries we do
+  not own — torch and numpy under ultralytics — and a `--seed` flag must do both:
+  call it *and* thread the number into the explicit seed the code already takes.
+  A flag that only set the global generators would be decorative everywhere
+  except training.
+- A `--seed` never moves the **folds**. They are the fixed validation set every
+  configuration is judged against; reseeding them per run would make two studies
+  incomparable, which is the thing Phase 1 fixed the splits to prevent.
 - External APIs are called through an injected fetcher/completer (see
   `agents/weather.py`, `agents/llm.py`). Tests and demos run offline against
   fixed data; nothing in the suite depends on a third party's uptime, a key, or
