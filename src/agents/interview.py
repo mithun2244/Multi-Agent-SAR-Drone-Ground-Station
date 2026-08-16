@@ -23,15 +23,21 @@ the model:
 
 ponytail: `looks_like_injection` is a keyword heuristic, not the classifier
 Phase 7 calls for. It catches lazy attempts and is honest about being a
-placeholder; the structural rule above is what actually holds the line.
+placeholder; the structural rule above is what actually holds the line. It now
+lives in `guardrails/injection.py`, shared with the operator-command guard —
+the same phrases attack both, so one list serves both.
+
+Not in the active pipeline. Witness intake is out of the current build (see
+docs/architecture.md, Phase 5); the agent is kept because the guard and the
+structural rule above are the reference for any untrusted text that returns.
 """
 
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..contracts.clue import AgentSource, ClueContract
+from ..guardrails.injection import looks_like_injection
 from ..guardrails.parsers import parse_reply
 from ..guardrails.provenance import TAG_INTERVIEW
 from ..guardrails.schemas import InterviewReply
@@ -39,18 +45,6 @@ from .llm import FAST_LLM_MODEL, LLMUnavailable
 
 INTERVIEW_PROVENANCE = TAG_INTERVIEW
 INTERVIEW_MODEL_TAG = FAST_LLM_MODEL
-
-# Lazy prompt-injection tells. Phase 7 replaces this with a real classifier.
-_INJECTION_PATTERNS = tuple(re.compile(p, re.I) for p in (
-    r"\bignore (all |any )?(previous|prior|above)\b",
-    r"\bdisregard (the |all )?(previous|prior|above|instructions)\b",
-    r"\byou are now\b",
-    r"\bsystem\s*:",
-    r"\bnew instructions?\b",
-    r"\boverride\b.*\b(instruction|rule|safety)\b",
-    r"\bstand down\b",
-    r"\bcall off the search\b",
-))
 
 FIELDS = ("time_last_seen", "clothing", "direction_of_travel")
 
@@ -85,11 +79,6 @@ class Extraction:
     @property
     def found(self):
         return [f for f in FIELDS if getattr(self, f)]
-
-
-def looks_like_injection(text):
-    """Which injection tells the transcript trips, if any."""
-    return [p.pattern for p in _INJECTION_PATTERNS if p.search(text or "")]
 
 
 def extract(transcript, complete=None):

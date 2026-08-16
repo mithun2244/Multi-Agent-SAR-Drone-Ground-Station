@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 PROVENANCE_REJECTED = "provenance_rejected"
 IMAGE_REJECTED = "image_rejected"
+COMMAND_FLAGGED = "command_flagged"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,10 @@ class SecurityEvent:
     provenance_tag: str | None = None
 
     def describe(self):
+        if self.source_agent is None and self.provenance_tag is None:
+            # Not a clue — an operator command, say. Naming an "unknown agent
+            # claiming no tag" would invent an attacker that was never there.
+            return f"{self.reason}: {self.detail}"
         who = self.source_agent or "unknown agent"
         tag = self.provenance_tag or "no tag"
         return f"{self.reason}: {who} claiming {tag!r} — {self.detail}"

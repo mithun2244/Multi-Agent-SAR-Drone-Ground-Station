@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 
 from ..bus import stream_for
 from ..contracts.clue import AgentSource
-from ..guardrails.audit import AuditLog
+from ..guardrails.audit import PROVENANCE_REJECTED, AuditLog
 from ..guardrails.contradiction import PerceptionFacts, check
 from ..guardrails.provenance import ProvenanceRegistry
 from ..perception.geolocation import ground_distance_m
@@ -195,10 +195,10 @@ class Picture:
 
         if self.security_events:
             lines.append("")
-            lines.append(f"  SECURITY: {len(self.security_events)} clue(s) rejected at the "
-                         f"provenance guard")
+            lines.append(f"  SECURITY: {len(self.security_events)} event(s) at the guards")
             for event in self.security_events[-5:]:
-                lines.append(f"      [REJECTED] {event.describe()}")
+                mark = "REJECTED" if event.kind == PROVENANCE_REJECTED else "FLAGGED"
+                lines.append(f"      [{mark}] {event.describe()}")
         lines.append("")
         return "\n".join(lines)
 
