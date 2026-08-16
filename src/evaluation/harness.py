@@ -40,7 +40,7 @@ def run_baseline(
     """Score clues against one split.
 
     `detector` is any callable (split, seed) -> list[ClueContract], so a real
-    YOLO11n producer drops straight in. Pass `clues` instead to score whatever
+    YOLO11m producer drops straight in. Pass `clues` instead to score whatever
     was captured off the bus.
 
     `case_id` scopes the run to one search — clues carry the case they belong

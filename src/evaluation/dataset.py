@@ -178,7 +178,7 @@ def mock_rgb_detector(
 ):
     """Placeholder RGB-only detector: the Phase 1 baseline to beat.
 
-    Stands in for YOLO11n on the RGB frame and emits `ClueContract` exactly as a
+    Stands in for YOLO11m on the RGB frame and emits `ClueContract` exactly as a
     real producer would. It misses some targets, invents some false alarms, and
     its geolocation is noisy because an RGB-only fix infers range from terrain
     instead of measuring it — the gap Phase 2 closes by adding LiDAR range.

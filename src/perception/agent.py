@@ -1,10 +1,27 @@
 """The detection agent — the Phase 2 vertical slice, end to end.
 
-    sensors -> weighted box fusion -> BoT-SORT -> geolocation -> bus
+    fitted sensors -> [weighted box fusion] -> BoT-SORT -> geolocation -> bus
 
 Architecture (Phase 2): "the agent emits one clue per confirmed track to the
 bus." Only confirmed tracks are published: a single-frame blip is not a target,
 and publishing one would put a phantom on the operator's map.
+
+Sensor-agnostic
+---------------
+The airframe decides what runs. A drone with only a camera fitted runs only the
+RGB detector; one with only a LiDAR runs only that; Weighted Box Fusion is the
+step that happens *when there are two feeds to reconcile*, not a mandatory stage.
+Everything after the detectors takes boxes and does not care where they came
+from, so tracking and the geodesic ray march are identical in all three cases.
+
+An absent feed and a quiet one are different things. A sensor that is fitted and
+delivered a frame with nothing in it still counts as a feed, so fusion goes on
+charging the other sensor's lone detection for the corroboration it did not get;
+a sensor that is not fitted, or whose feed dropped this frame, is simply not
+there to corroborate and nothing is deducted for its silence.
+
+Published clues name the sensors behind them in `agent_metadata["sensors"]`, so
+a consumer can tell an RGB-only sighting from one two sensors agreed on.
 
 On a track that cannot be geolocated
 ------------------------------------
@@ -48,6 +65,7 @@ class DetectionAgent:
         lidar_sigma_m=0.5,
         stream=None,
         device_id=None,
+        detectors=None,
     ):
         self.bus = bus
         self.case_id = case_id
@@ -60,38 +78,80 @@ class DetectionAgent:
         self.stream = stream or stream_for(case_id)
         # The airframe this agent is flying on, checked by the provenance guard.
         self.device_id = device_id
+        # What is fitted to that airframe: {sensor -> callable(frame_id, feed,
+        # case_id) -> [ClueContract]}. Injected rather than imported by name, so
+        # a real model replaces a stub without touching this file. Leave it empty
+        # and call `process_frame` directly if the caller runs its own detectors.
+        #
+        # ponytail: `fusion_weights` stays positional, aligned to this mapping's
+        # order. Two sensors and a dropped feed means one group and no fusion, so
+        # the misalignment cannot bite; key the weights by sensor name if a third
+        # sensor is ever fitted.
+        self.detectors = dict(detectors or {})
 
         self.published = 0
         self.without_fix = 0
         self._last_timestamp = None
 
+    def capture(self, frame_id, feeds, telemetry, camera_motion=None):
+        """Detect on whichever fitted sensors delivered this frame, then track.
+
+        `feeds` maps sensor name to whatever that sensor produced this frame — an
+        RGB image, a LiDAR range image, the simulator's truth targets. Only
+        detectors with a feed run, so a drone with no LiDAR fitted never pays for
+        a LiDAR model and a feed that dropped out is not invented.
+        """
+        groups = [self.detectors[name](frame_id, feeds[name], self.case_id)
+                  for name in self.detectors if feeds.get(name) is not None]
+        return self.process_frame(frame_id, groups, telemetry, camera_motion)
+
     def process_frame(self, frame_id, sensor_clues, telemetry, camera_motion=None):
-        """Run one frame through the pipeline. Returns the clues published."""
-        fused = weighted_box_fusion(
-            sensor_clues,
-            weights=self.fusion_weights,
-            iou_threshold=self.fusion_iou_threshold,
-        )
-        for clue in fused:
+        """Run one frame through the pipeline. Returns the clues published.
+
+        `sensor_clues` is one list of detections per feed carrying this frame:
+        `[rgb, lidar]` on a two-sensor airframe, `[rgb]` on a DJI that only has
+        a camera. Fusion runs only when there is more than one feed — with a
+        single sensor there is nothing to reconcile and nothing to weigh, so its
+        boxes reach the tracker untouched rather than through a one-input merge
+        that could only round them.
+        """
+        feeds = [list(group) for group in sensor_clues]
+        # Checked on the way in, not on the fused output: a foreign clue must be
+        # refused whether or not fusion is the stage that would have carried it.
+        for clue in (c for group in feeds for c in group):
             if clue.case_id != self.case_id:
                 raise ValueError(
                     f"clue {clue.clue_id} belongs to {clue.case_id}, not {self.case_id}"
                 )
 
-        if fused:
-            self._last_timestamp = max(c.timestamp for c in fused)
+        if len(feeds) > 1:
+            detections = weighted_box_fusion(
+                feeds,
+                weights=self.fusion_weights,
+                iou_threshold=self.fusion_iou_threshold,
+            )
+        else:
+            detections = feeds[0] if feeds else []
 
-        confirmed = self.tracker.update(fused, frame_id=frame_id, camera_motion=camera_motion)
+        if detections:
+            self._last_timestamp = max(c.timestamp for c in detections)
+
+        # Which sensors are behind each detection, resolved before tracking: the
+        # tracker keeps clue ids, and this is the only place that still knows
+        # what those ids came off.
+        origins = {clue.clue_id: _sensors_of(clue) for clue in detections}
+        confirmed = self.tracker.update(detections, frame_id=frame_id,
+                                        camera_motion=camera_motion)
 
         published = []
         for track in confirmed:
-            clue = self._track_clue(track, frame_id, telemetry)
+            clue = self._track_clue(track, frame_id, telemetry, origins)
             self.bus.publish(clue, stream=self.stream)
             published.append(clue)
             self.published += 1
         return published
 
-    def _track_clue(self, track, frame_id, telemetry):
+    def _track_clue(self, track, frame_id, telemetry, origins=None):
         x1, y1, x2, y2 = track.box
         fix = geolocate(
             ((x1 + x2) / 2.0, y2),  # ground contact point, not the box centre
@@ -104,6 +164,10 @@ class DetectionAgent:
             self.without_fix += 1
 
         label = track.class_label or "contact"
+        # The sensors behind the detection that updated this track *this* frame,
+        # not the whole frame's sensors: with two targets and only one of them in
+        # the RGB frame, a frame-level list would over-claim for the other.
+        sensors = (origins or {}).get(track.clue_ids[-1], []) if track.clue_ids else []
         metadata = {
             "track_id": track.track_id,
             "track_state": track.state.value,
@@ -111,6 +175,7 @@ class DetectionAgent:
             "frames_seen": track.frames_seen,
             "first_frame_id": track.first_frame_id,
             "geolocation": "located" if fix else "no_fix",
+            "sensors": list(sensors),
         }
         if self.device_id:
             metadata["device_id"] = self.device_id
@@ -132,7 +197,7 @@ class DetectionAgent:
             timestamp=self._last_timestamp,
             source_agent=AgentSource.PERCEPTION_FUSION,
             confidence_score=track.confidence,
-            finding_summary=self._summary(track, label, fix),
+            finding_summary=self._summary(track, label, fix, sensors),
             spatial_context=SpatialContext(
                 latitude=fix.latitude if fix else None,
                 longitude=fix.longitude if fix else None,
@@ -151,8 +216,10 @@ class DetectionAgent:
         return (RangeEstimate(track.range_m, RangeSource.MEASURED_LIDAR, self.lidar_sigma_m),)
 
     @staticmethod
-    def _summary(track, label, fix):
+    def _summary(track, label, fix, sensors=()):
         seen = f"track {track.track_id}, {track.frames_seen} frames"
+        if sensors:
+            seen += f", {'+'.join(sensors)}"
         if fix is None:
             return f"Confirmed {label} ({seen}); position unavailable, no range to terrain"
         how = "measured LiDAR range" if fix.is_measured else "range inferred from terrain"
@@ -162,11 +229,23 @@ class DetectionAgent:
         )
 
 
+def _sensors_of(clue):
+    """Which physical sensors are behind one detection.
+
+    A fused clue names its parents; a single-sensor detection is its own source.
+    Either way the published track says which sensor actually saw the target,
+    which is the difference between "two sensors agree" and "the camera thinks
+    so" — and on a single-sensor airframe that is the whole story.
+    """
+    fused_from = clue.agent_metadata.get("wbf_sources")
+    return list(fused_from) if fused_from else [clue.source_agent.value]
+
+
 if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
     import os
 
     from ..bus import FakeRedisStreams, RedisBus
-    from .detectors import Target, lidar_stub, yolo11n_stub
+    from .detectors import Target, lidar_stub, yolo11m_stub
     from .geolocation import Camera, Telemetry, ground_distance_m, slant_range_m, world_to_pixel
     from .terrain import GridDEM
 
@@ -207,7 +286,7 @@ if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
         bus, backend = RedisBus(FakeRedisStreams()), "mocked connection (set REDIS_URL for a server)"
 
     agent = DetectionAgent(bus, CASE, camera, dem=dem, tracker=BoTSORT(min_hits=3))
-    rgb, lidar = yolo11n_stub(seed=11, recall=0.95), lidar_stub(seed=11, recall=0.8)
+    rgb, lidar = yolo11m_stub(seed=11, recall=0.95), lidar_stub(seed=11, recall=0.8)
 
     print(f"\n  redis: {backend}")
     print(f"  {dem}\n  terrain at drone: {dem.elevation(*DRONE):.1f} m, "

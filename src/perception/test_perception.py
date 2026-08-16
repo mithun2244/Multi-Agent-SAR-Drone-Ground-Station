@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from ..contracts.clue import AgentSource, ClueContract, SpatialContext
 from ..evaluation.dataset import Detection
 from ..evaluation.metrics import haversine_m
-from .detectors import Target, lidar_stub, yolo11n_stub
+from .detectors import Target, lidar_stub, yolo11m_stub
 from .fusion import FUSION_PROVENANCE, weighted_box_fusion
 from ..bus import CLUE_FIELD, FakeRedisStreams, RedisBus, stream_for
 from .agent import TRACK_PROVENANCE, DetectionAgent
@@ -226,7 +226,7 @@ def test_fused_clue_is_consumable_downstream():
 
 def test_stubs_emit_valid_clues():
     targets = [Target((100, 100, 160, 240), (46.8182, 8.2275))]
-    rgb = yolo11n_stub(seed=1).detect("frame_0001", targets)
+    rgb = yolo11m_stub(seed=1).detect("frame_0001", targets)
     lidar = lidar_stub(seed=1).detect("frame_0001", targets)
 
     assert all(isinstance(c, ClueContract) for c in rgb + lidar)
@@ -242,7 +242,7 @@ def test_stubs_emit_valid_clues():
 def test_stub_output_fuses_end_to_end():
     targets = [Target((100, 100, 160, 240), (46.8182, 8.2275)),
                Target((600, 300, 650, 420), (46.8190, 8.2280))]
-    rgb = yolo11n_stub(seed=3, recall=1.0, fp_per_frame=0.0)
+    rgb = yolo11m_stub(seed=3, recall=1.0, fp_per_frame=0.0)
     lidar = lidar_stub(seed=3, recall=1.0, fp_per_frame=0.0)
     fused = weighted_box_fusion([rgb.detect("frame_0001", targets),
                                  lidar.detect("frame_0001", targets)])
@@ -833,7 +833,7 @@ def test_pixel_ray_is_a_unit_vector():
 def test_fused_track_geolocates_end_to_end():
     """The Phase 2 chain: two sensors -> fusion -> tracker -> a position."""
     targets = [Target((600, 300, 650, 420), (46.8190, 8.2280))]
-    rgb = yolo11n_stub(seed=5, recall=1.0, fp_per_frame=0.0)
+    rgb = yolo11m_stub(seed=5, recall=1.0, fp_per_frame=0.0)
     lidar = lidar_stub(seed=5, recall=1.0, fp_per_frame=0.0)
     tracker = BoTSORT(min_hits=2)
 
@@ -1021,20 +1021,20 @@ def test_bus_maxlen_trims_the_stream():
 
 
 def _run_agent(frames=4, dem=None, telemetry=None, case_id="case-0000", targets=None,
-               use_lidar=True):
+               use_rgb=True, use_lidar=True, tracker=None):
     bus = _bus()
     agent = DetectionAgent(
         bus, case_id, _CAM, dem=dem if dem is not None else ConstantDEM(0.0),
-        tracker=BoTSORT(min_hits=2),
+        tracker=tracker or BoTSORT(min_hits=2),
     )
     targets = targets or [Target((600, 300, 650, 420), (46.8190, 8.2280))]
-    rgb = yolo11n_stub(seed=7, recall=1.0, fp_per_frame=0.0)
+    rgb = yolo11m_stub(seed=7, recall=1.0, fp_per_frame=0.0)
     lidar = lidar_stub(seed=7, recall=1.0, fp_per_frame=0.0)
 
     published = []
     for i in range(frames):
         frame = f"frame_{i:04d}"
-        sensors = [rgb.detect(frame, targets, case_id)]
+        sensors = [rgb.detect(frame, targets, case_id)] if use_rgb else []
         if use_lidar:
             sensors.append(lidar.detect(frame, targets, case_id))
         published += agent.process_frame(
@@ -1136,6 +1136,110 @@ def test_agent_refuses_clues_from_another_case():
     except ValueError as e:
         assert "case-theirs" in str(e)
     assert bus.length(stream_for("case-mine")) == 0
+
+
+def test_rgb_only_airframe_never_fuses_and_says_so():
+    """A DJI with one camera fitted: YOLO's boxes reach the tracker untouched."""
+    bus, agent, published = _run_agent(frames=4, use_lidar=False)
+
+    assert agent.published == len(published) == 3
+    for clue in published:
+        assert clue.agent_metadata["sensors"] == ["DRONE_RGB"]
+        assert clue.agent_metadata["range_source"] == "INFERRED_TERRAIN", "no LiDAR to measure it"
+        assert clue.spatial_context.bounding_box is not None
+        # Still the tracked product of perception, whatever fed it — the tag and
+        # the agent are what the provenance allow-list binds together.
+        assert clue.source_agent is AgentSource.PERCEPTION_FUSION
+        assert clue.provenance_tag == TRACK_PROVENANCE
+        assert "DRONE_RGB" in clue.finding_summary
+
+
+def test_lidar_only_airframe_keeps_its_measured_range():
+    """And needs its spawn threshold retuned, which is the point of pinning it.
+
+    BoT-SORT's shipped `new_track_thresh` of 0.6 is a *fused-stream* number. The
+    LiDAR detector is deliberately the less certain of the two — it sees a shape,
+    not a class — so alone it rarely clears 0.6 and confirms nothing at all. The
+    sensor-agnostic pipeline routes single-sensor boxes correctly; it cannot make
+    a threshold calibrated for two sensors right for one.
+    """
+    _, _, unretuned = _run_agent(frames=4, use_rgb=False)
+    assert unretuned == [], "a LiDAR-only airframe confirms nothing at the fused threshold"
+
+    bus, agent, published = _run_agent(
+        frames=4, use_rgb=False, tracker=BoTSORT(min_hits=2, new_track_thresh=0.45),
+    )
+    assert agent.published == len(published) == 3
+    assert agent.without_fix == 0
+    for clue in published:
+        assert clue.agent_metadata["sensors"] == ["DRONE_LIDAR"]
+        assert clue.agent_metadata["range_source"] == "MEASURED_LIDAR"
+        assert clue.spatial_context.latitude is not None
+
+
+def test_both_feeds_still_fuse_and_name_both_sensors():
+    _, _, published = _run_agent(frames=4)
+    for clue in published:
+        assert clue.agent_metadata["sensors"] == ["DRONE_LIDAR", "DRONE_RGB"]
+
+
+def test_a_quiet_feed_is_not_an_absent_one():
+    """The corroboration penalty must survive the sensor-agnostic refactor.
+
+    A LiDAR detection that the fitted RGB camera did not back is worth less than
+    the same detection on an airframe with no camera to back it. Dropping empty
+    groups would quietly delete that distinction and make every lone sighting
+    look as good as a corroborated one.
+    """
+    targets = [Target((600, 300, 650, 420), (46.8190, 8.2280))]
+    lidar_clues = lidar_stub(seed=7, recall=1.0, fp_per_frame=0.0).detect(
+        "frame_0000", targets, "case-0000")
+    telemetry = _telemetry(pitch_deg=70.0, altitude_m=120.0)
+
+    def publish(feeds):
+        # Thresholds dropped so both runs spawn a track: the penalty under test
+        # is large enough to push the penalised detection under the default
+        # new_track_thresh, and then there would be nothing to compare.
+        agent = DetectionAgent(_bus(), "case-0000", _CAM, dem=ConstantDEM(0.0),
+                               tracker=BoTSORT(min_hits=1, high_thresh=0.1,
+                                               new_track_thresh=0.2))
+        (clue,) = agent.process_frame("frame_0000", feeds, telemetry)
+        return clue
+
+    quiet_camera = publish([[], lidar_clues])   # RGB fitted, saw nothing
+    no_camera = publish([lidar_clues])          # no RGB fitted at all
+
+    assert quiet_camera.confidence_score < no_camera.confidence_score
+    assert quiet_camera.agent_metadata["sensors"] == ["DRONE_LIDAR"]
+    assert no_camera.agent_metadata["sensors"] == ["DRONE_LIDAR"]
+
+
+def test_capture_runs_only_the_sensors_that_delivered():
+    """No feed, no model call. A LiDAR model on an RGB-only drone is pure cost."""
+    calls = []
+
+    def counted(name, detector):
+        def detect(frame_id, feed, case_id):
+            calls.append(name)
+            return detector.detect(frame_id, feed, case_id)
+        return detect
+
+    agent = DetectionAgent(
+        _bus(), "case-0000", _CAM, dem=ConstantDEM(0.0), tracker=BoTSORT(min_hits=1),
+        detectors={"rgb": counted("rgb", yolo11m_stub(seed=7, recall=1.0, fp_per_frame=0.0)),
+                   "lidar": counted("lidar", lidar_stub(seed=7, recall=1.0, fp_per_frame=0.0))},
+    )
+    targets = [Target((600, 300, 650, 420), (46.8190, 8.2280))]
+    published = agent.capture("frame_0000", {"rgb": targets},
+                              _telemetry(pitch_deg=70.0, altitude_m=120.0))
+
+    assert calls == ["rgb"], f"only the fitted feed may run a model, got {calls}"
+    assert published and published[0].agent_metadata["sensors"] == ["DRONE_RGB"]
+
+    published = agent.capture("frame_0001", {"rgb": targets, "lidar": targets},
+                              _telemetry(pitch_deg=70.0, altitude_m=120.0))
+    assert calls == ["rgb", "rgb", "lidar"], "both feeds present, both models run"
+    assert published[0].agent_metadata["sensors"] == ["DRONE_LIDAR", "DRONE_RGB"]
 
 
 def main():

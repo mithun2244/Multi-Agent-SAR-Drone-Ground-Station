@@ -61,6 +61,19 @@ optuna*.db
 *.sqlite3
 studies/
 
+# --- generated output ---------------------------------------------------
+# coordinator/map_visualizer.py writes this; the script is the source, the
+# map is a render of wherever it last pointed.
+sar_target_map.html
+
+# --- training artefacts -------------------------------------------------
+# train_perception.py writes runs/ (weights, plots, per-epoch results) and
+# ultralytics downloads datasets/ alongside the repo. Gigabytes of derived
+# output; weights that are worth keeping belong in a release, not in git.
+runs/
+datasets/
+*.pt
+
 # --- editors and operating systems --------------------------------------
 .vscode/
 .idea/
