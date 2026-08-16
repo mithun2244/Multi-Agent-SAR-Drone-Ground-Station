@@ -243,9 +243,11 @@ def _sensors_of(clue):
 
 if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
     import os
+    import sys
 
     from ..bus import FakeRedisStreams, RedisBus
-    from .detectors import Target, lidar_stub, yolo11m_stub
+    from .detectors import Target
+    from .models import build_detectors, describe, perception_mode
     from .geolocation import Camera, Telemetry, ground_distance_m, slant_range_m, world_to_pixel
     from .terrain import GridDEM
 
@@ -286,9 +288,19 @@ if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
         bus, backend = RedisBus(FakeRedisStreams()), "mocked connection (set REDIS_URL for a server)"
 
     agent = DetectionAgent(bus, CASE, camera, dem=dem, tracker=BoTSORT(min_hits=3))
-    rgb, lidar = yolo11m_stub(seed=11, recall=0.95), lidar_stub(seed=11, recall=0.8)
+
+    # Stub unless asked otherwise: --real / --stub beat PERCEPTION_MODE, which
+    # beats the default. Note what real weights would mean here — `truth` below
+    # is ground truth projected into a frame that does not exist, which a real
+    # model cannot be handed. The switch is wired so the seam is exercised end
+    # to end; real weights need real frames to be worth anything.
+    mode = perception_mode("real" if "--real" in sys.argv else
+                           "stub" if "--stub" in sys.argv else None)
+    detectors = build_detectors(mode, seed=11)
+    rgb, lidar = detectors["rgb"], detectors["lidar"]
 
     print(f"\n  redis: {backend}")
+    print(f"  {describe(mode, detectors)}")
     print(f"  {dem}\n  terrain at drone: {dem.elevation(*DRONE):.1f} m, "
           f"drone at {telemetry.altitude_m:.0f} m\n")
     for i in range(6):

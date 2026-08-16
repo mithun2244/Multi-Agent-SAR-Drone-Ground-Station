@@ -75,6 +75,7 @@ src/
 ├── perception/              Phase 2
 │   ├── fusion.py            Weighted Box Fusion (pixel-level, one frame)
 │   ├── detectors.py         YOLO11m / LiDAR stubs
+│   ├── models.py            stub-or-real factory, PERCEPTION_MODE=stub|real
 │   ├── tracking.py          BoT-SORT: Kalman, two-stage association, CMC
 │   ├── terrain.py           DEM sources (constant, lat/lon grid, JSON loader)
 │   ├── geolocation.py       WGS84 geodesy, DEM ray march, range selection
@@ -161,6 +162,9 @@ python -m src.evaluation.test_evaluation    # Phase 1 checks
 python -m src.perception.test_perception    # Phase 2 checks
 python -m src.perception.fusion             # worked WBF example
 python -m src.perception.agent              # full pipeline, clues landing on the bus
+python -m src.perception.agent --real       # real weights instead of stubs (needs checkpoints)
+PERCEPTION_MODE=real python -m src.perception.agent
+python -m src.perception.models --selfcheck # the stub/real switch, without a checkpoint
 REDIS_URL=redis://localhost:6379/0 python -m src.perception.agent   # against a real server
 python -m src.coordinator.test_coordinator  # Phase 3 checks
 python -m src.agents.test_agents            # Phase 4-5 checks
@@ -204,6 +208,15 @@ CASE_ID=case-mock-drone python -m src.coordinator.demo  # a coordinator joins th
   drop the detection either, since "seen but not located" is real information.
 - Detectors are injected as callables, never imported by name into the harness,
   so a real model replaces a stub without touching scoring code.
+- **Stub is the default detector, always.** `PERCEPTION_MODE=real` is opt-in and
+  `perception/models.py` is the only place that decides; unset, nothing imports
+  ultralytics, reads a checkpoint or changes a number. Tests and tuning folds
+  need projected ground truth to score against, so they stay on stubs whatever
+  the environment says. A missing checkpoint fails at wiring time with the path
+  it wanted, never mid-sortie.
+- A real detector emits a box, a class and a confidence — and **no coordinates**.
+  `DetectionAgent` geolocates from the box, the telemetry and the DEM, and the
+  LiDAR model reports a range only when something actually measured one.
 - Optional on the contract, required at the consumer: `frame_id` and
   `bounding_box` are optional so non-detection agents can omit them, and
   `ClueContract.detection_box()` enforces them where a clue must be located.
