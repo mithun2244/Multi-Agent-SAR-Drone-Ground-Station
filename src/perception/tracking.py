@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from ..geometry import iou
+from ..utils.ablation import CMC, enabled
 
 # ByteTrack/BoT-SORT noise scaling. Position noise grows with target size: a
 # large nearby target moves more pixels per frame than a distant one.
@@ -209,7 +210,14 @@ class BoTSORT:
         second_match_thresh=0.5,
         min_hits=3,
         max_age=30,
+        cmc=None,
     ):
+        # Camera-motion compensation. `None` asks the environment
+        # (ABLATION_CMC), which is on unless a run says otherwise. Switched off,
+        # the tracker still predicts, associates and ages exactly as before — it
+        # just stops being told the camera moved, which on a drone is most of
+        # the apparent motion. That is the ablation: everything else identical.
+        self.cmc = enabled(CMC, cmc)
         self.high_thresh = high_thresh
         self.new_track_thresh = new_track_thresh
         self.match_thresh = match_thresh  # max IoU *cost* (1 - IoU) for stage one
@@ -226,7 +234,7 @@ class BoTSORT:
         for track in self.tracks:
             track.kalman.predict()
             track.box = track.kalman.box
-            if camera_motion is not None and not camera_motion.is_identity:
+            if self.cmc and camera_motion is not None and not camera_motion.is_identity:
                 track.kalman.apply_affine(camera_motion)
                 track.box = track.kalman.box
 

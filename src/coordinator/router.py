@@ -37,6 +37,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..utils.ablation import disabled_agents
+
 # Canonical dispatch order. Routing changes *which* agents run, never the order
 # they run in: scene needs detection to have published, health needs weather.
 ALL_AGENTS = ("detection", "weather", "health", "path", "scene")
@@ -102,9 +104,20 @@ class Route:
 class ScenarioRouter:
     """Picks the smallest agent set that can answer the current question."""
 
-    def __init__(self, agent_sets=None, all_agents=ALL_AGENTS):
+    def __init__(self, agent_sets=None, all_agents=ALL_AGENTS, disabled=None):
         self.agent_sets = dict(AGENT_SETS if agent_sets is None else agent_sets)
         self.all_agents = tuple(all_agents)
+        # Ablation: agents held out of every route, however a query classifies.
+        # `None` asks the environment (ABLATION_DISABLE_AGENTS), which is empty
+        # unless a run says otherwise. Enforced here rather than at the
+        # dispatcher so a disabled agent cannot reach a route by any path.
+        self.disabled = disabled_agents(disabled)
+        unknown = self.disabled - set(self.all_agents)
+        if unknown:
+            raise ValueError(
+                f"cannot disable {', '.join(sorted(unknown))}: not in the roster "
+                f"({', '.join(self.all_agents)})"
+            )
         self.routed = {}
 
     def route(self, trigger=None, context=None):
@@ -157,8 +170,11 @@ class ScenarioRouter:
         wanted = set()
         for scenario in scenarios:
             wanted.update(self.agent_sets.get(scenario, self.all_agents))
+        wanted -= self.disabled
         # Canonical order always, so dependencies hold whatever matched.
         agents = tuple(a for a in self.all_agents if a in wanted)
+        if self.disabled:
+            reason = f"{reason}; ablated: {', '.join(sorted(self.disabled))}"
         scenario = (next(iter(scenarios)) if len(scenarios) == 1
                     else RouteScenario.FULL_SEARCH_BRIEFING)
         return Route(scenario=scenario, agents=agents, reason=reason, matched=matched)

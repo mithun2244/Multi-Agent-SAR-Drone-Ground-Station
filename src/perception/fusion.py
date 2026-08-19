@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from ..contracts.clue import AgentSource, ClueContract, SpatialContext
 from ..geometry import iou
 from ..guardrails.provenance import TAG_WBF
+from ..utils.ablation import WBF, enabled
 
 # Provenance for anything this module mints. Must be on the Phase 7 allow-list.
 FUSION_PROVENANCE = TAG_WBF
@@ -40,6 +41,7 @@ def weighted_box_fusion(
     weights=None,
     iou_threshold=0.55,
     score_threshold=0.0,
+    fuse=None,
 ):
     """Fuse detections from several detectors into one clue per target.
 
@@ -51,10 +53,16 @@ def weighted_box_fusion(
     looking at different frames, or calling the target different things, do not
     corroborate each other. Returns a new list of clues, each carrying its
     parents in `parent_clue_ids`. Inputs are never mutated.
+
+    `fuse=False` (or `ABLATION_WBF=off`) bypasses the merge entirely — see
+    `pass_through`. That is an ablation, not a configuration: it exists to
+    measure what the merge is worth, and it throws away the second sensor.
     """
     groups = [list(g) for g in clue_groups]
     if not groups:
         return []
+    if not enabled(WBF, fuse):
+        return pass_through(groups)
     if weights is None:
         weights = [1.0] * len(groups)
     if len(weights) != len(groups):
@@ -96,6 +104,29 @@ def weighted_box_fusion(
         for cluster in clusters:
             fused.append(_fuse_cluster(cluster, frame_id, label, n_models, weight_sum, iou_threshold))
     return fused
+
+
+def pass_through(groups):
+    """The WBF ablation: one detector's boxes, untouched.
+
+    The feed holding the single most confident detection wins the frame and its
+    clues go straight to the tracker — no merged box, no `parent_clue_ids`, no
+    corroboration counted. Picking by the best detection rather than by a mean
+    keeps it close to what a one-sensor airframe would actually have produced.
+
+    What this costs is the whole point of measuring it: the losing sensor's
+    contribution is discarded, so an RGB-only frame loses the measured LiDAR
+    range and geolocation falls back to the terrain intersection. Empty feeds
+    lose to any feed with a detection; all-empty returns nothing.
+    """
+    best, best_score = [], None
+    for group in groups:
+        if not group:
+            continue
+        score = max(clue.confidence_score for clue in group)
+        if best_score is None or score > best_score:
+            best, best_score = list(group), score
+    return best
 
 
 def _weighted_mean(values, weights):

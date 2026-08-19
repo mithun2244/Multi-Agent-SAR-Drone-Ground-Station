@@ -35,6 +35,8 @@ cannot make consistent is exactly the one a human should see.
 
 from dataclasses import dataclass
 
+from ..utils.ablation import DECISION, enabled
+
 # Danger is scored on an explicit 1-10 scale. 1 is the floor, not zero: a case
 # is only open because somebody is missing, and that is never no danger at all.
 RISK_MIN, RISK_MAX = 1, 10
@@ -266,6 +268,11 @@ class CommanderBrief:
     consistent: bool = True
     passes: int = 1
 
+    def summary(self):
+        """One line, for a caller that does not care which shape it got."""
+        return (f"risk {self.risk.score}/10 {self.risk.band}, "
+                f"{self.recommendation.action}")
+
     def render(self):
         lines = [
             "",
@@ -348,13 +355,78 @@ def orchestrate(facts, assessment, recommendation, max_passes=MAX_PASSES, protoc
     )
 
 
-def decide(picture, commander=None, protocol=PROTOCOL):
+@dataclass(frozen=True)
+class FlatReport:
+    """What the commander gets with the chain switched off: the picture, as is.
+
+    The ablation for the whole decision plane. No facts compiled, no risk
+    scored, no action chosen, no consistency checked — fusion's ranked targets
+    go straight through, which is what a system that stopped at Phase 2 would
+    have handed an operator.
+
+    It deliberately has no `risk` or `recommendation`: a caller reaching for
+    them should fail loudly rather than read a zero and believe it. `summary()`
+    is the one thing both shapes answer.
+    """
+
+    case_id: str
+    targets: tuple = ()
+    survival_window_hours: int | None = None
+    hypothermia_risk: bool = False
+    guard_events: int = 0
+
+    def summary(self):
+        return f"{len(self.targets)} target(s), no risk score (decision chain ablated)"
+
+    def render(self):
+        lines = [
+            "",
+            f"  Flat report — {self.case_id}   [ABLATED: no decision chain]",
+            "  " + "-" * 84,
+            f"  {len(self.targets)} target(s), best first, straight off fusion:",
+        ]
+        for rank, target in enumerate(self.targets, 1):
+            where = (f"{target.latitude:.6f}, {target.longitude:.6f}"
+                     if target.located else "NOT LOCATED")
+            lines.append(f"    {rank:<4}{target.target_id:<6}conf {target.confidence:.3f}  "
+                         f"prio {target.priority:.3f}  {where}")
+        if self.survival_window_hours is not None:
+            lines.append(f"  survival window {self.survival_window_hours} h"
+                         + ("  HYPOTHERMIA RISK" if self.hypothermia_risk else ""))
+        if self.guard_events:
+            lines.append(f"  {self.guard_events} event(s) at the guards")
+        lines.append("  no risk score, no recommended action — read the ranking and decide.")
+        lines.append("")
+        return "\n".join(lines)
+
+
+def flatten(picture):
+    """The picture as a commander-facing report, with nothing judged."""
+    return FlatReport(
+        case_id=picture.case_id,
+        targets=tuple(picture.targets),
+        survival_window_hours=picture.survival_window_hours,
+        hypothermia_risk=picture.hypothermia_risk,
+        guard_events=len(picture.security_events),
+    )
+
+
+def decide(picture, commander=None, protocol=PROTOCOL, chain=None):
     """The whole chain: picture in, commander brief out.
 
     `commander` is whoever receives the brief — the operator console, a log, a
     bus publisher. Left out, the brief is simply returned; the chain has no
     opinion about who reads it.
+
+    `chain=False` (or `ABLATION_DECISION=off`) hands back a `FlatReport`
+    instead: fusion's ranking with nothing reasoned over it.
     """
+    if not enabled(DECISION, chain):
+        report = flatten(picture)
+        if commander is not None:
+            commander(report)
+        return report
+
     facts = reason(picture)
     assessment = risk(facts)
     brief = orchestrate(facts, assessment, recommend(facts, assessment, protocol),

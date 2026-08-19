@@ -64,7 +64,9 @@ src/
 ├── geometry.py              iou(), shared by perception and evaluation
 ├── bus.py                   RedisBus over Redis Streams (+ FakeRedisStreams)
 ├── utils/
-│   └── seed.py              set_global_seed() for torch/numpy under ultralytics
+│   ├── seed.py              set_global_seed() for torch/numpy under ultralytics
+│   ├── ablation.py          ABLATION_* switches: turn one component off
+│   └── test_ablation.py     25 checks, one per switch, on and off
 ├── contracts/
 │   └── clue.py              ClueContract — single source of truth for the schema
 ├── evaluation/              Phase 1 harness
@@ -182,6 +184,11 @@ python -m src.agents.path --seed 42         # Monte-Carlo sectors, reproducible
 python -m src.coordinator.demo --seed 42    # one draw of the stub noise, reproducible
 python -m src.coordinator.mock_drone_publisher --seed 42
 python -m src.utils.seed --selfcheck        # what a global seed does and does not reach
+python -m src.utils.test_ablation           # ablation switches, on and off
+ABLATION_WBF=off python -m src.perception.agent          # no box fusion
+ABLATION_CMC=off python -m src.coordinator.mock_drone_publisher --check
+ABLATION_DISABLE_AGENTS=weather,path python -m src.coordinator.demo
+ABLATION_DECISION=off python -m src.coordinator.demo     # flat report, no chain
 python train_perception.py --mode rgb --epochs 50 --seed 42   # fine-tune, then score it
 python train_perception.py --mode lidar     # skips gracefully until there is LiDAR data
 python train_perception.py --selfcheck      # the wiring, without a dataset or a GPU
@@ -331,6 +338,13 @@ CASE_ID=case-mock-drone python -m src.coordinator.demo  # a coordinator joins th
   noise has learned nothing.
 - Tuning results come from a **simulator**: real pipeline, stubbed imagery. They
   are a starting point for a run against real recordings, not a substitute.
+- Ablations are **off by default and always announced**. `utils/ablation.py`
+  resolves every `ABLATION_*` switch; unset means the shipped system, so no test
+  had to change. Each site takes an explicit argument that defaults to `None`,
+  and `None` asks the environment. A run with something switched off says so in
+  its header — an ablated run that looks normal is how a wrong number reaches a
+  report. This is not the critic's ablation: that re-weights a *signal* on a
+  finished picture, this removes a *component* so the pipeline runs without it.
 - Randomness is **injected, never global**. Every RNG in `src/` is an isolated
   `random.Random(seed)`, so a fixed split means the same thing whatever else the
   process did first. `utils/seed.set_global_seed` exists for the libraries we do

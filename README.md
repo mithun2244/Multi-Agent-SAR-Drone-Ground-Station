@@ -6,7 +6,7 @@ finds; and a four-stage decision chain turns that picture into one validated
 brief — who is out there, where, how dangerous it is, and what to do next.
 
 Built in phases, each with its own exit criteria and test suite.
-**409 automated checks** across eight suites, no network required.
+**434 automated checks** across nine suites, no network required.
 
 ```
 ┌ PERCEPTION ── on the drone, at frame rate ─────────────────────────────────┐
@@ -434,6 +434,33 @@ Three deliberate exceptions:
   noise, and a self-check quietly run on a seed it was not calibrated for is
   worse than no self-check.
 
+### Ablate a component
+
+Every switch is off by default, so an unset environment is the shipped system:
+
+```bash
+ABLATION_WBF=off      python -m src.perception.agent        # no box fusion
+ABLATION_CMC=off      python -m src.coordinator.mock_drone_publisher --check
+ABLATION_DISABLE_AGENTS=weather,path python -m src.coordinator.demo
+ABLATION_DECISION=off python -m src.coordinator.demo        # flat report, no chain
+```
+
+This is not the critic's ablation. The critic re-weights a *signal* on a picture
+that has already been produced; these remove a *component* so the pipeline
+actually runs without it — the question is "was this stage worth building?"
+rather than "was this signal worth including?". Anything switched off is printed
+in the run header, because an ablated run that looks like a normal one is how a
+wrong number ends up in a report.
+
+Measured on the demo case, which is what the switches are for:
+
+| Ablated | What happens |
+|---|---|
+| `ABLATION_WBF=off` | 8 clues → 5, and **every** measured LiDAR range is lost — all fixes fall back to the DEM intersection |
+| `ABLATION_CMC=off` | the mock drone's orbit stops tracking entirely: no track ever confirms, so `--check` fails by design |
+| `ABLATION_DISABLE_AGENTS=weather,path` | risk 9/10 CRITICAL → 3/10 LOW, `IMMEDIATE_EXTRACTION` → `MONITOR_AND_CONFIRM` |
+| `ABLATION_DECISION=off` | the commander gets fusion's ranking with no risk score and no recommended action |
+
 ### Run the tests
 
 ```bash
@@ -445,6 +472,7 @@ python -m src.guardrails.test_guardrails     #  51 checks
 python -m src.guardrails.test_adversarial    #  28 crafted attacks
 python -m src.critic.test_critic             #  34 checks
 python -m src.tuning.test_tuning             #  25 checks
+python -m src.utils.test_ablation            #  25 checks
 
 python -m src.utils.seed --selfcheck         # what a global seed does and does not reach
 ```

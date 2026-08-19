@@ -36,6 +36,7 @@ from ..guardrails.audit import AuditLog
 from ..guardrails.cache import ResponseCache
 from ..guardrails.provenance import OPEN_METEO_ENDPOINT, TAG_TRACK, ProvenanceRegistry
 from ..tuning.params import CONFIG_PATH, load_params
+from ..utils.ablation import describe as describe_ablations
 from ..utils.seed import set_global_seed
 from ..perception.agent import DetectionAgent
 from ..perception.detectors import Target, lidar_stub, yolo11m_stub
@@ -450,6 +451,7 @@ def main(argv=None):
     print(f"  last seen at {POINT_LAST_SEEN[0]:.5f}, {POINT_LAST_SEEN[1]:.5f} "
           f"({dem.elevation(*POINT_LAST_SEEN):.0f} m, uphill of the search area)")
     print(f"  agents:  {orchestrator.agents}")
+    print(f"  {describe_ablations()}")
 
     triggers = (
         (Scenario.DRONE_AIRBORNE, "sortie launched"),
@@ -476,9 +478,9 @@ def main(argv=None):
             print(f"      skipped {len(skipped)} agent(s): {list(skipped)}")
         for agent, result in dispatch.results.items():
             print(f"      {agent:<10} -> {result}")
-        brief = dispatch.brief
-        print(f"      decision -> risk {brief.risk.score}/10 {brief.risk.band}, "
-              f"{brief.recommendation.action}")
+        # summary(), not brief.risk: with ABLATION_DECISION=off this is a flat
+        # report with no risk score, and reaching for one should not be possible.
+        print(f"      decision -> {dispatch.brief.summary()}")
 
     # An attacker puts a clue on the bus: a real-looking detection from a drone
     # that is not ours, claiming a target in the wrong valley.
