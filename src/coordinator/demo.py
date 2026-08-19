@@ -37,6 +37,7 @@ from ..guardrails.cache import ResponseCache
 from ..guardrails.provenance import OPEN_METEO_ENDPOINT, TAG_TRACK, ProvenanceRegistry
 from ..tuning.params import CONFIG_PATH, load_params
 from ..utils.ablation import describe as describe_ablations
+from ..utils.ablation import keep_feeds
 from ..utils.seed import set_global_seed
 from ..perception.agent import DetectionAgent
 from ..perception.detectors import Target, lidar_stub, yolo11m_stub
@@ -110,7 +111,8 @@ def build_detection_agent(bus, case_id, seed=DETECTOR_SEED):
             sortie["frame"] += 1
             published += len(agent.process_frame(
                 name,
-                [rgb.detect(name, targets, case_id), lidar.detect(name, targets, case_id)],
+                keep_feeds({"rgb": rgb.detect(name, targets, case_id),
+                            "lidar": lidar.detect(name, targets, case_id)}),
                 telemetry,
             ))
         return {"frames": context.get("frames", 4), "clues_published": published}

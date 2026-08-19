@@ -1,0 +1,90 @@
+# Ablation runs: what each component is worth, measured rather than asserted.
+#
+#   python experiments/run_ablation.py
+#   python experiments/run_ablation.py --only full_system,no_wbf
+#
+# Every run is the same scenario under a different set of switches, so the only
+# thing that changes between two rows is the component named in `env`. Each one
+# is a fresh subprocess: the switches are read when a component is constructed,
+# so mutating the environment in-process would ablate whatever had not been
+# imported yet and nothing else.
+#
+# `measures` says which engine can see the change, and it is not decoration —
+# a switch the engine never reaches produces a row identical to full_system,
+# and reading that as "the component does not matter" is exactly the wrong
+# conclusion. detection = the perception pipeline scored by the Phase 1
+# harness; command = router, agents, fusion and the decision chain scored by
+# the Phase 8 critic.
+
+defaults:
+  frames: 6
+  seed: 0
+
+runs:
+  - name: full_system
+    description: everything on — the system as shipped, and the row every other one is read against
+    measures: [detection, flight, command]
+    env: {}
+
+  - name: rgb_only
+    description: LiDAR not fitted; no second feed, so WBF never runs and range comes from terrain
+    measures: [detection, command]
+    env:
+      ABLATION_DISABLE_SENSORS: lidar
+
+  - name: no_wbf
+    description: two feeds, no merge — the best detector's boxes pass through untouched
+    measures: [detection, command]
+    env:
+      ABLATION_WBF: "off"
+
+  - name: no_cmc
+    # `flight`, not `detection`. The tuning scenario flies a static pose and
+    # never supplies camera motion, so ablating the compensation there changes
+    # nothing — a row that would read as "CMC does not matter" when the
+    # experiment could not see it. The mock drone orbits, which is the point.
+    description: BoT-SORT without camera-motion compensation; drone movement reads as target movement
+    measures: [flight, command]
+    env:
+      ABLATION_CMC: "off"
+
+  - name: no_decision_chain
+    description: fusion's ranking straight to the commander — no reason, risk, recommend or orchestrate
+    measures: [command]
+    env:
+      ABLATION_DECISION: "off"
+
+  - name: no_weather
+    description: no conditions, so no survival window and nothing for urgency to sort by
+    measures: [command]
+    env:
+      ABLATION_DISABLE_AGENTS: weather
+
+  - name: no_path
+    description: no Monte-Carlo sectors, so no prior on where to look
+    measures: [command]
+    env:
+      ABLATION_DISABLE_AGENTS: path
+
+  - name: no_scene
+    description: no VLM description, so no visible hazards and no hazard urgency
+    measures: [command]
+    env:
+      ABLATION_DISABLE_AGENTS: scene
+
+  - name: no_health
+    description: no subject-specific refinement; the survival window stays at the coarse band table
+    measures: [command]
+    env:
+      ABLATION_DISABLE_AGENTS: health
+
+  - name: detection_only
+    # Only `command` is listed on purpose. This run sets no perception switch, so
+    # its detection numbers are full_system's by construction — printing them
+    # again would look like a measurement and be a copy. What this row is for is
+    # the command side collapsing to a bare ranking.
+    description: perception alone — every ground agent off and no decision chain, i.e. a system that stopped at Phase 2
+    measures: [command]
+    env:
+      ABLATION_DISABLE_AGENTS: weather,path,scene,health
+      ABLATION_DECISION: "off"

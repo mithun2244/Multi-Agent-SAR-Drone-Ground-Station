@@ -35,6 +35,7 @@ from ..perception.geolocation import (
 )
 from ..perception.terrain import GridDEM
 from ..perception.tracking import BoTSORT
+from ..utils.ablation import keep_feeds
 from .params import TunedParams
 
 DRONE = (46.8182, 8.2275)
@@ -214,8 +215,8 @@ def run(params=None, seed=0, frames=6, case_id="tune-0000", missing_hours=2.0):
         lidar_clues = (lidar_clear.detect(frame_id, clear, case.case_id)
                        + lidar_faint.detect(frame_id, faint, case.case_id))
         raw_detections.extend(rgb_clues)
-        detections.extend(
-            detection_agent.process_frame(frame_id, [rgb_clues, lidar_clues], TELEMETRY))
+        detections.extend(detection_agent.process_frame(
+            frame_id, keep_feeds({"rgb": rgb_clues, "lidar": lidar_clues}), TELEMETRY))
         truth_boxes.extend((frame_id, subject) for subject in truth)
 
     # A cold front over the casualty only, so urgency has something to sort by.

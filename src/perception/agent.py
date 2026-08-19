@@ -247,6 +247,7 @@ if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
 
     from ..bus import FakeRedisStreams, RedisBus
     from .detectors import Target
+    from ..utils.ablation import keep_feeds
     from .models import build_detectors, describe, perception_mode
     from .geolocation import Camera, Telemetry, ground_distance_m, slant_range_m, world_to_pixel
     from .terrain import GridDEM
@@ -307,7 +308,8 @@ if __name__ == "__main__":  # a full frame-by-frame run, for eyeballing the bus
         frame = f"frame_{i:04d}"
         emitted = agent.process_frame(
             frame,
-            [rgb.detect(frame, truth, CASE), lidar.detect(frame, truth, CASE)],
+            keep_feeds({"rgb": rgb.detect(frame, truth, CASE),
+                        "lidar": lidar.detect(frame, truth, CASE)}),
             telemetry,
         )
         print(f"  {frame}: published {len(emitted)}")

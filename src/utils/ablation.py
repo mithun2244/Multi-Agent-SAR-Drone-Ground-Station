@@ -44,6 +44,7 @@ WBF = "ABLATION_WBF"
 CMC = "ABLATION_CMC"
 DECISION = "ABLATION_DECISION"
 DISABLE_AGENTS = "ABLATION_DISABLE_AGENTS"
+DISABLE_SENSORS = "ABLATION_DISABLE_SENSORS"
 
 SWITCHES = (WBF, CMC, DECISION)
 
@@ -82,12 +83,36 @@ def disabled_agents(override=None, env=None):
     return frozenset(name.strip().lower() for name in str(raw).split(",") if name.strip())
 
 
+def disabled_sensors(override=None, env=None):
+    """Sensors this airframe is to behave as though it does not have."""
+    if override is not None:
+        raw = override if isinstance(override, str) else ",".join(override)
+    else:
+        raw = (env if env is not None else os.environ).get(DISABLE_SENSORS, "")
+    return frozenset(name.strip().lower() for name in str(raw).split(",") if name.strip())
+
+
+def keep_feeds(feeds, override=None, env=None):
+    """Drop the feeds of ablated sensors. `feeds` is {sensor: clues}.
+
+    Returns the surviving feeds in the order given. Removing a sensor is not the
+    same as that sensor seeing nothing — the pipeline is already sensor-agnostic,
+    so one feed means WBF does not run at all, which is exactly what a
+    single-sensor airframe does.
+    """
+    off = disabled_sensors(override, env)
+    return [clues for sensor, clues in feeds.items() if sensor.lower() not in off]
+
+
 def active(env=None):
     """Everything currently switched off, for a run header. Empty means shipped."""
     off = [name for name in SWITCHES if not enabled(name, env=env)]
     agents = disabled_agents(env=env)
     if agents:
         off.append(f"{DISABLE_AGENTS}={','.join(sorted(agents))}")
+    sensors = disabled_sensors(env=env)
+    if sensors:
+        off.append(f"{DISABLE_SENSORS}={','.join(sorted(sensors))}")
     return tuple(off)
 
 
