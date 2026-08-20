@@ -124,6 +124,8 @@ src/
     ├── objective.py         Optuna TPE study against CriticReport.loss
     ├── demo.py              baseline vs tuned, side by side
     └── test_tuning.py       25 checks
+└── ui/                      the ground station, over the same pipeline
+    └── dashboard.py         Streamlit: ablation toggles, a frame in, 3 columns out
 ```
 
 How fusion treats each source (`coordinator/fusion.py`). Every `AgentSource` has
@@ -196,6 +198,8 @@ python -m src.coordinator.demo --live-weather   # hits Open-Meteo instead of fix
 python -m src.coordinator.mock_drone_publisher          # mock airframe onto a live Redis
 python -m src.coordinator.mock_drone_publisher --check  # offline: the feed reaches a picture
 CASE_ID=case-mock-drone python -m src.coordinator.demo  # a coordinator joins that case
+streamlit run src/ui/dashboard.py           # the ground station UI
+python -m src.ui.dashboard --selfcheck      # its wiring, without a browser
 ```
 
 ## Conventions
