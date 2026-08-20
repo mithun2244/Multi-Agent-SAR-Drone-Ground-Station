@@ -301,6 +301,62 @@ because the scenario's decoys are visible to RGB alone.
 
 ---
 
+## Real-Time Performance
+
+Can the airframe fly this pipeline? Profiled component by component — 50 warm-up
+calls, then 200 measured, `time.perf_counter` around each — on **real YOLO11m
+weights over a real VisDrone frame**, because a stub answers in microseconds and
+would say nothing at all about a drone.
+
+```bash
+python experiments/profile_latency.py       # writes results/latency_budget.csv
+python experiments/visualize_latency.py     # writes results/latency_breakdown.png
+```
+
+Measured on an **8-thread x86 CPU with no GPU**, batch of one, no TensorRT and no
+half precision:
+
+| Component | Per | ×/frame | mean | p95 | p99 |
+|---|---|---|---|---|---|
+| **YOLO11m (RGB)** | frame | 1 | **238.90 ms** | 264.49 ms | 311.04 ms |
+| Weighted Box Fusion | frame | 1 | 0.128 ms | 0.135 ms | 0.162 ms |
+| BoT-SORT + CMC | frame | 1 | 0.054 ms | 0.058 ms | 0.062 ms |
+| Geolocation, measured LiDAR range | track | 3 | 0.004 ms | 0.004 ms | 0.005 ms |
+| Geolocation, DEM ray march | track | 3 | 0.057 ms | 0.094 ms | 0.105 ms |
+| Decision chain (Reason→Risk→Recommend→Orchestrate) | **query** | — | 0.011 ms | 0.012 ms | 0.014 ms |
+
+| Airframe | Frame budget | FPS |
+|---|---|---|
+| RGB + LiDAR — WBF runs, measured range wins | 239.10 ms | **4.18** |
+| RGB only — nothing to fuse, fix off the DEM | 239.13 ms | **4.18** |
+
+**The detector is the pipeline.** Everything this project actually built —
+fusion, tracking with camera-motion compensation, geodesic geolocation for every
+track — adds **0.19 ms to a 239 ms frame: 0.08% of the budget**. On its own it
+would sustain roughly 5,000 FPS. The decision chain is 0.011 ms and is not in
+either budget at all: it runs per operator query on a picture, not per frame.
+
+So edge feasibility is entirely a question of detector inference, which is the
+part with a known deployment answer — TensorRT, FP16, a Jetson-class accelerator
+— and not of the architecture around it. A faster detector moves this number;
+nothing else here needs to change to keep up with one.
+
+Both airframes cost the same because the difference between them (WBF, or a DEM
+ray march instead of a measured range) is a fraction of a millisecond either way.
+The two rows are reported separately regardless, so a single FPS figure is never
+quoted from whichever configuration flattered it.
+
+> **Honest caveats.** These are CPU numbers, not Jetson numbers — the *shape* of
+> the budget transfers, the absolute times do not. A pipeline row's p95 is the
+> **sum** of its components' p95s, an upper bound on the frame's p95 rather than
+> the frame's p95: the stages do not all have their bad frame at once. p99 over
+> 200 samples is the second-slowest sample — a hint about the tail, not an
+> estimate of it. And the detector row is one model on one frame at batch one;
+> an optimised export is a different measurement, which is why the profiler
+> reads the model only through `build_detectors` and can be pointed at one.
+
+---
+
 ## Tech stack
 
 | | |

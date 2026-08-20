@@ -50,6 +50,32 @@ comparable to the effect, so a one-seed row claiming a precise drop would be
 reporting a coin flip. The per-seed rows stay above the mean and std in the CSV,
 because an average that hides its inputs is how an outlier disappears.
 
+## Latency
+
+Where a frame's time goes, and what that leaves for FPS.
+
+```bash
+python experiments/profile_latency.py               # 50 warm-up, 200 measured
+python experiments/profile_latency.py --warmup 10 --iterations 50
+python experiments/visualize_latency.py             # the CSV as a picture
+python experiments/profile_latency.py --selfcheck
+python experiments/visualize_latency.py --selfcheck
+```
+
+The detector row is **real weights on a real frame** — `config/weights/
+yolo11m_visdrone.pt` over a VisDrone test image. A missing checkpoint gives `n/a`
+rows and a printed reason; a stub is never substituted, because a stub answers in
+microseconds and a latency table that quoted one would be fiction.
+
+Two frame budgets are reported, not one: with two sensors fitted WBF runs and a
+measured LiDAR range makes the fix, with one there is nothing to fuse and the DEM
+ray march does it. The decision chain is in neither — it runs per operator query,
+and folding it into a frame budget would understate FPS.
+
+A pipeline row's p95 is the **sum** of its components' p95s. That is an upper
+bound on the frame's p95, not the frame's p95, and the CSV says so in its note
+column.
+
 ## Baselines
 
 What the full system has to justify itself against, and the comparison over all
