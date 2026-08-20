@@ -461,6 +461,50 @@ Measured on the demo case, which is what the switches are for:
 | `ABLATION_DISABLE_AGENTS=weather,path` | risk 9/10 CRITICAL → 3/10 LOW, `IMMEDIATE_EXTRACTION` → `MONITOR_AND_CONFIRM` |
 | `ABLATION_DECISION=off` | the commander gets fusion's ranking with no risk score and no recommended action |
 
+### Compare against baselines
+
+What the full system has to justify itself above. Both baselines run the same
+scenario, the same subjects and the same seeds as every ablation row, so the
+numbers are comparable by construction rather than by coincidence.
+
+```bash
+python experiments/baselines/plain_yolo.py --seeds 0,42,123        # detector alone
+python experiments/baselines/yolo_plus_tracker.py --seeds 0,42,123 # + BoT-SORT
+python experiments/baselines/compare.py    # every result, one table and a chart
+```
+
+| Run | Tap | Seeds | mAP | recall@FAR | MOTA | IDF1 | critic loss |
+|---|---|---|---|---|---|---|---|
+| `plain_yolo` | detector | 0, 42, 123 | 0.680 | 0.167 | — | — | — |
+| `yolo_plus_tracker` | detector + tracker | 0, 42, 123 | 0.568 | 0.204 | 0.222 | 0.650 | — |
+| `full_system` | full pipeline | 0 | **0.778** | **0.778** | — | — | **0.0030** |
+| `rgb_only` / `no_wbf` | full pipeline | 0 | 0.548 | 0.222 | — | — | 0.0002 |
+| `detection_only` | full pipeline | 0 | — | — | — | — | 0.2063 |
+
+The baselines are means over three seeds; the ablation rows are one draw of
+seed 0, which is what `run_ablation.py` writes by default. They are not the same
+kind of number, so the column says which — see the caveat on spread below.
+
+**Read within a tap first.** The tracker's mAP is *lower* than the raw
+detector's and it is the better system: BoT-SORT drops the single-frame blips
+plain YOLO happily reports, trading a little mAP for far fewer phantoms on an
+operator's map. A single ranking across taps would invert that conclusion.
+
+A dash is a metric that source never measured — **not a zero**. `plain_yolo` has
+no critic loss because there is no ranked picture to score; `detection_only` has
+no mAP because the switch it sets cannot change the detector.
+
+Two honest caveats the table carries:
+
+- **Spread can swamp the effect.** Over three seeds `no_wbf` gives recall@FAR
+  **0.278 ± 0.242**. Single-seed rows are indicative only, which is what
+  `run_multi_seed.py` exists for, and the chart draws error bars only where a
+  spread was actually measured.
+- **Geolocation error *improves* when LiDAR is removed** (0.18 m → 0.01 m).
+  That is survivorship plus a simulator artefact — the synthetic DEM is an exact
+  function, so a terrain-inferred range is as good as a measured one, and only
+  the easy targets survive to be scored. It is not a result.
+
 ### Run the tests
 
 ```bash
