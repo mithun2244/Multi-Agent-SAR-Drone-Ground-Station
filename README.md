@@ -1,5 +1,7 @@
 # Autonomous Multi-Agent SAR Drone Ground Station
 
+[![Build Status](https://github.com/mithun2244/Multi-Agent-SAR-Drone-Ground-Station/actions/workflows/ci.yml/badge.svg)](https://github.com/mithun2244/Multi-Agent-SAR-Drone-Ground-Station/actions/workflows/ci.yml)
+
 An event-driven ground station for mountain search-and-rescue. A drone's sensors
 feed a perception pipeline; four ground agents widen the picture around what it
 finds; and a four-stage decision chain turns that picture into one validated

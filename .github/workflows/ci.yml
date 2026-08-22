@@ -1,7 +1,7 @@
 # This workflow will install Python dependencies, run tests and lint with a variety of Python versions
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Python package
+name: CI
 
 on:
   push:
@@ -56,3 +56,7 @@ jobs:
         python -m src.guardrails.test_adversarial
         python -m src.critic.test_critic
         python -m src.tuning.test_tuning
+    - name: Ablation sanity checks
+      # --selfcheck, not a full ablation sweep: it verifies the config and the
+      # switches agree with the code, without spawning a process per run.
+      run: python experiments/run_ablation.py --selfcheck
