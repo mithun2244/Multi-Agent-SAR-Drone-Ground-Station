@@ -7,8 +7,11 @@ optuna>=4.0          # TPE search for the Phase 9 tuning study
 folium>=0.20         # interactive Leaflet map for the SAR target visualizer
 python-dotenv>=1.0   # NVIDIA_API_KEY / REDIS_URL out of .env, for the demos
 streamlit>=1.49      # the ground station dashboard, src/ui/dashboard.py. Brings
-                     # Pillow (drawing boxes on a frame) with it; nothing outside
-                     # src/ui imports it, so the pipeline still runs without it.
+                     # Pillow with it, which src/ui needs to draw boxes on a
+                     # frame and the Scene agent uses to cut the subject out of
+                     # one. That use is optional: `crop_region` returns None
+                     # without a decoder and the VLM gets the frame alone, so
+                     # the pipeline still runs on the three load-bearing packages.
 
 # Optional. SRTM .hgt tiles need nothing at all (see SrtmHgtDEM); this is only
 # for GeoTIFF/Copernicus rasters, and it pulls in GDAL.

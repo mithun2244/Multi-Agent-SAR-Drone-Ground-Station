@@ -4,6 +4,7 @@
 """
 
 import base64
+import io
 import json
 import os
 import urllib.error
@@ -13,6 +14,7 @@ from . import llm as llm_module
 
 from ..bus import FakeRedisStreams, RedisBus, stream_for
 from ..contracts.clue import AgentSource, ClueContract, SpatialContext
+from ..guardrails.cache import ResponseCache
 from ..perception.terrain import ConstantDEM, GridDEM
 from .health import (
     HEALTH_MODEL_TAG,
@@ -62,7 +64,7 @@ from .path import (
     build_briefing,
     simulate_sectors,
 )
-from .scene import SCENE_PROVENANCE, SceneAgent
+from .scene import SCENE_PROVENANCE, SceneAgent, context_region, crop_region
 from .weather import (
     MAX_WINDOW_HOURS,
     WEATHER_PROVENANCE,
@@ -554,9 +556,13 @@ def _sector(probability):
 
 _SCENE_REPLY = json.dumps({
     "description": "Figure prone on open scree beside a stream.",
+    "person_state": "lying, stationary, dark jacket, no visible injury",
     "terrain": "loose scree",
+    "environment": "steep scree, wet ground, meltwater channel two metres away",
     "visibility": "low cloud",
     "hazards": ["fast water", "loose rock"],
+    "immediate_risks": ["drowning risk", "exposure risk"],
+    "access_difficulty": "difficult",
     "subject_state": "not moving",
 })
 
@@ -580,15 +586,22 @@ def _detection(frame_id="frame_0001", state="CONFIRMED", conf=0.8, track_id="1",
 
 
 def _scene_agent(bus=None, reply=_SCENE_REPLY, images=True):
+    """`images` is what the loader hands back: stub bytes, real bytes, or None.
+
+    Stub bytes are not a decodable image, so the agent sends the frame alone —
+    which is what a sortie over synthetic frames does, and what the older checks
+    below are written against.
+    """
     calls = []
 
     def describe(prompt, image=None, mime_type="image/jpeg"):
         calls.append((prompt, image))
         return reply
 
+    frame = b"jpeg-bytes" if images is True else images or None
     agent = SceneAgent(
         bus or _bus(), "case-0000", describe=describe,
-        image_loader=(lambda frame_id: b"jpeg-bytes") if images else (lambda frame_id: None),
+        image_loader=lambda frame_id: frame,
     )
     agent.calls = calls
     return agent
@@ -694,6 +707,193 @@ def test_scene_prompt_names_the_detection_it_is_about():
     assert "[10, 20, 40, 90]" in prompt
     assert "JSON only" in prompt
     assert agent.calls[0][1] == b"jpeg-bytes", "the image actually goes to the model"
+
+
+def test_scene_clue_carries_the_environment_not_just_the_person():
+    """Level 2: a team walking in needs to know what they are walking into."""
+    agent = _scene_agent()
+    (clue,) = agent.process([_detection("frame_0001")])
+
+    metadata = clue.agent_metadata
+    assert metadata["person_state"].startswith("lying, stationary")
+    assert "meltwater channel" in metadata["environment"]
+    assert metadata["immediate_risks"] == ["drowning risk", "exposure risk"]
+    assert metadata["access_difficulty"] == "difficult"
+    assert metadata["hazards"] == ["fast water", "loose rock"], "still separate from risks"
+
+
+def test_scene_falls_back_to_person_state_when_the_model_names_it_that():
+    """Two names for one observation. Fusion reads `subject_state`; a model that
+    only filled the Level 2 field must not lose it."""
+    agent = _scene_agent(reply=json.dumps({
+        "description": "Figure on scree.",
+        "person_state": "sitting, waving",
+    }))
+    (clue,) = agent.process([_detection("frame_0001")])
+    assert clue.agent_metadata["subject_state"] == "sitting, waving"
+    assert clue.agent_metadata["immediate_risks"] == [], "nothing said is nothing invented"
+
+
+def test_scene_prompt_asks_about_the_person_and_the_ground_around_them():
+    agent = _scene_agent()
+    agent.process([_detection("frame_0001")])
+    prompt = agent.calls[0][0]
+    assert "PERSON STATE" in prompt and "ENVIRONMENT" in prompt
+    assert "IMMEDIATE RISKS" in prompt
+    # The box is the subject; the region around it is the surroundings. Both are
+    # named so the model knows which pixels are which.
+    assert "box [10, 20, 40, 90]" in prompt
+    assert "region [0, 0, 70, 160]" in prompt
+
+
+def _jpeg(width=200, height=200, encoding="JPEG"):
+    """A real encoded image, or None where Pillow is not installed."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (90, 110, 90)).save(buffer, format=encoding)
+    return buffer.getvalue()
+
+
+def test_the_crop_is_cut_out_of_the_frame():
+    frame = _jpeg(400, 300)
+    if frame is None:
+        assert crop_region(b"anything", [0.0, 0.0, 10.0, 10.0]) is None, \
+            "no decoder installed means no crop, never a crash"
+        return
+
+    crop = crop_region(frame, [100.0, 100.0, 180.0, 220.0])
+    from PIL import Image
+    with Image.open(io.BytesIO(crop)) as cut:
+        assert cut.size == (80, 120), "the detection box, tightly"
+        assert cut.format == "JPEG", "re-encoded as the frame arrived"
+    assert len(crop) < len(frame), "the second image is a crop, not a second frame"
+
+    # A box overhanging the edge is clipped, not padded with black.
+    with Image.open(io.BytesIO(crop_region(frame, [380.0, 290.0, 500.0, 400.0]))) as edge:
+        assert edge.size == (20, 10)
+
+    # A PNG frame stays a PNG, so one declared mime type covers both images.
+    png = _jpeg(60, 60, encoding="PNG")
+    with Image.open(io.BytesIO(crop_region(png, [0.0, 0.0, 40.0, 40.0]))) as cut:
+        assert cut.format == "PNG"
+
+
+def test_nothing_worth_looking_at_is_not_cropped():
+    frame = _jpeg(400, 300)
+    if frame is None:
+        return
+    assert crop_region(frame, [10.0, 10.0, 14.0, 14.0]) is None, "4 px of subject"
+    assert crop_region(frame, [500.0, 500.0, 600.0, 600.0]) is None, "wholly outside"
+    assert crop_region(frame, None) is None and crop_region(frame, [1.0, 2.0]) is None
+    assert crop_region(b"not an image at all", [0.0, 0.0, 50.0, 50.0]) is None
+    assert crop_region(None, [0.0, 0.0, 50.0, 50.0]) is None
+
+
+def test_scene_sends_the_crop_and_the_frame_in_that_order():
+    frame = _jpeg(400, 300)
+    if frame is None:
+        return
+    agent = _scene_agent(images=frame)
+    (clue,) = agent.process([_detection("frame_0001")])
+
+    prompt, sent = agent.calls[0]
+    assert isinstance(sent, list) and len(sent) == 2
+    assert sent[1] == frame, "the whole frame goes second"
+    assert sent[0] != frame and len(sent[0]) < len(frame), "the crop goes first"
+    assert "two images" in prompt and "then the whole frame" in prompt
+    assert agent.crops_sent == 1 and agent.crops_dropped == 0
+    assert clue.agent_metadata["images_sent"] == 2
+
+
+def test_a_model_that_will_not_take_two_images_still_gets_a_description():
+    """One endpoint takes a second inline image, another does not. Losing the
+    crop costs detail; treating it as a failure would cost the description."""
+    frame = _jpeg(400, 300)
+    if frame is None:
+        return
+    calls = []
+
+    def one_image_only(prompt, image=None, mime_type="image/jpeg"):
+        calls.append(image)
+        if isinstance(image, list):
+            raise LLMUnavailable("this model accepts a single image")
+        return _SCENE_REPLY
+
+    agent = SceneAgent(_bus(), "case-0000", describe=one_image_only,
+                       image_loader=lambda frame_id: frame)
+    (clue,) = agent.process([_detection("frame_0001")])
+    assert clue.agent_metadata["images_sent"] == 1
+    assert calls[-1] == frame and agent.api_calls == 1 and agent.failures == 0
+    assert agent.crops_dropped == 1 and agent.send_crop is False
+
+    # And it does not pay for the refusal again on the next frame.
+    agent.process([_detection("frame_0002")])
+    assert len(calls) == 3 and agent.crops_dropped == 1
+    assert not any(isinstance(sent, list) for sent in calls[2:])
+
+
+def test_an_unreachable_model_does_not_switch_cropping_off():
+    """A network outage is not a verdict on the second image."""
+    frame = _jpeg(400, 300)
+    if frame is None:
+        return
+    agent = SceneAgent(_bus(), "case-0000", describe=unavailable_completer(),
+                       image_loader=lambda frame_id: frame)
+    assert agent.process([_detection("frame_0001")]) == []
+    assert agent.failures == 1 and agent.send_crop is True
+    assert agent.crops_dropped == 0
+
+
+def test_two_images_inline_in_order_under_one_size_limit():
+    """NIM's cap is on the request, not on each picture in it."""
+    sent = {}
+
+    def fake_urlopen(request, timeout=None):
+        sent["body"] = json.loads(request.data.decode())
+        return _FakeResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    client = NimClient("secret-key")
+    original = llm_module.urllib.request.urlopen
+    llm_module.urllib.request.urlopen = fake_urlopen
+    try:
+        client.complete("what is here", image=[b"\x01crop", b"\x02frame"])
+        content = sent["body"]["messages"][0]["content"]
+        assert sent["body"]["model"] == DEFAULT_VLM_MODEL
+        assert content.count("<img src=") == 2
+        assert content.index(base64.b64encode(b"\x01crop").decode()) \
+            < content.index(base64.b64encode(b"\x02frame").decode())
+
+        try:
+            half = b"x" * (MAX_INLINE_IMAGE_BYTES // 2 + 1)
+            client.complete("describe", image=[half, half])
+            raise AssertionError("two images over the limit together must be refused")
+        except LLMUnavailable as e:
+            assert "assets API" in str(e) and "2 image(s)" in str(e)
+    finally:
+        llm_module.urllib.request.urlopen = original
+
+
+def test_the_cache_tells_two_images_apart_from_one():
+    cache = ResponseCache()
+    frame, crop = b"\x02frame", b"\x01crop"
+    assert cache.key("p", image=[crop, frame]) != cache.key("p", image=frame)
+    assert cache.key("p", image=[crop, frame]) != cache.key("p", image=[frame, crop])
+    assert cache.key("p", image=[frame]) == cache.key("p", image=frame)
+
+
+def test_the_context_region_is_the_box_grown_about_its_centre():
+    box = [100.0, 100.0, 200.0, 200.0]
+    assert context_region(box) == [0, 0, 300, 300], "3x, centred on the same point"
+
+    # Clipped to the frame when the frame size is known, and never negative.
+    assert context_region([10.0, 20.0, 40.0, 90.0], (1280, 720)) == [0, 0, 70, 160]
+    assert context_region([1200.0, 650.0, 1260.0, 710.0], (1280, 720)) == [1140, 590, 1280, 720]
+
+    assert context_region(box, factor=1.0) == [100, 100, 200, 200], "1x is the box itself"
+    assert context_region(None) is None and context_region([1.0, 2.0]) is None
 
 
 # --------------------------------------------------------------------------

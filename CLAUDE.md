@@ -91,16 +91,16 @@ src/
 │   ├── router.py            trigger/query → smallest agent set that answers it
 │   ├── demo.py              operator query → dispatch → picture → brief
 │   ├── mock_drone_publisher.py  mock airframe → real pipeline → bus (dev feed)
-│   └── test_coordinator.py  105 checks
+│   └── test_coordinator.py  107 checks
 └── agents/                  Phase 4-5 — the data-gathering plane
     ├── llm.py               NVIDIA NIM over stdlib urllib (text + vision)
     ├── weather.py           Open-Meteo, wind chill, hypothermia risk + window
     ├── path.py              Monte-Carlo sectors; LLM writes the briefing only
-    ├── scene.py             VLM, gated on confirmed detections
+    ├── scene.py             VLM, gated on confirmed detections; person + environment
     ├── health.py            subject-specific survival window (clamped multiplier)
     ├── history.py           not in the pipeline — TF-IDF RAG over a case archive
     ├── interview.py         not in the pipeline — NER over untrusted witness text
-    └── test_agents.py       63 checks
+    └── test_agents.py       74 checks
 └── guardrails/              Phase 6 — what stands between a model and the bus
     ├── schemas.py           Pydantic reply models (Scene/Health/Interview/Text)
     ├── parsers.py           strict parse, one repair pass, then discard
@@ -136,7 +136,7 @@ exactly one role, and a test fails if one is ever left unrouted:
 | detection | `PERCEPTION_FUSION`, `DRONE_*` | creates/updates targets, sets confidence |
 | context | `WEATHER_API`, `HEALTH_LLM` | conditions + survival window → urgency |
 | prediction | `PATH_MODEL` | search sectors → priority prior |
-| annotation | `SCENE_VLM` | target profile + hazards → urgency |
+| annotation | `SCENE_VLM` | target profile + hazards → urgency; environment, immediate risks and access difficulty → the Risk stage, never urgency |
 | advisory | `HISTORY_RAG`, `INTERVIEW_LLM` | operator notes; change nothing else (agents retired, handling kept) |
 
 Only **detection** sources touch confidence.
@@ -368,9 +368,26 @@ python -m src.ui.dashboard --selfcheck      # its wiring, without a browser
   for vision). It is OpenAI chat-completions shaped and reached with stdlib
   `urllib` — no `openai` package. Images inline as an `<img src="data:...">` tag
   in the message content, which is NIM's documented form, and one over the inline
-  size limit is refused rather than truncated.
+  size limit is refused rather than truncated. `complete` takes a sequence of
+  images as well as one, inlined in the order given; the size limit is on their
+  **total**, since NIM's cap is on the request, not on each picture in it.
 - The Scene VLM runs once per frame that already holds a *confirmed* track, and
   never on a frame whose image it was not handed. Empty hillside costs nothing.
+- Scene reads the person **and** the ground around them. It sends **two images**:
+  a crop of the detection box (`scene.crop_region`, cut in-process from the
+  frame the ledger already verified, so it needs no capture record of its own)
+  and the whole frame behind it, with the ~3x region around the box
+  (`scene.context_region`) named in the prompt as the immediate surroundings.
+  Both degradations send the frame alone and say so in `images_sent`: no Pillow
+  installed, or an endpoint that refuses a second inline image — and that second
+  one latches off for the sortie, but only once a retry proves the frame alone
+  works, since an unreachable model is not a verdict on the crop. What it reads
+  is scored **once**: `hazards` feed urgency in fusion as they always did, while
+  `immediate_risks` and `access_difficulty` feed the Risk stage. Counting one
+  description in both would move a ranking Phase 9 tuned against the old signal.
+  Risk matches categories against `immediate_risks` only — scanning the
+  environment prose for "water" would score "no water nearby" as a river, and a
+  silent false +2 is worse than a missed one.
 - A picture is a snapshot, not a live view. `fusion.picture()` returns detached
   copies so state cannot change under whoever is reading it — and both readers,
   the critic and the decision chain, are read-only for the same reason.

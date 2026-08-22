@@ -57,6 +57,10 @@ from .orchestrator import Orchestrator, Scenario
 DRONE = (46.8182, 8.2275)
 SUBJECTS = ((46.8190, 8.2280), (46.8186, 8.2265))
 
+# What the demo camera below sees: 1280x720, which is where its cx/cy come from.
+# The Scene agent needs it to keep the context region inside the frame.
+FRAME_SIZE = (1280, 720)
+
 # The approved fleet, endpoints and operators for this search. Anything on the
 # bus not matching these is refused at the blackboard and logged.
 DRONE_ID = "AA:BB:CC:DD:EE:01"
@@ -183,16 +187,26 @@ def build_weather_agent(bus, case_id, live=False):
 STUB_SCENES = (
     json.dumps({
         "description": "Figure prone on open scree beside a meltwater channel.",
+        "person_state": "lying, stationary, no movement across three frames, dark jacket",
         "terrain": "loose scree, no path",
+        "environment": "steep scree below a snow line, meltwater channel two metres "
+                       "from the subject, ground wet, no shelter within 50 m",
         "visibility": "low cloud, failing light",
         "hazards": ["fast water", "loose rock"],
+        "immediate_risks": ["drowning risk", "exposure risk"],
+        "access_difficulty": "difficult",
         "subject_state": "not moving",
     }),
     json.dumps({
         "description": "Figure sitting upright in the lee of a boulder field.",
+        "person_state": "sitting, moving, waved at the drone, no visible injury",
         "terrain": "sheltered hollow, boulders",
+        "environment": "grassy hollow between boulders, ground dry, vehicle track "
+                       "about 40 m downhill",
         "visibility": "clearing, long shadows",
         "hazards": ["unstable boulders"],
+        "immediate_risks": [],
+        "access_difficulty": "moderate",
         "subject_state": "moving, waved at the drone",
     }),
 )
@@ -245,7 +259,7 @@ def build_path_agent(bus, case_id, dem, complete, pls, elapsed_hours, seed=PATH_
     return handler, agent
 
 
-def build_scene_agent(bus, case_id, describe, stream, registry=None):
+def build_scene_agent(bus, case_id, describe, stream, registry=None, image_loader=None):
     """The VLM, gated on confirmed detections.
 
     Keeps its own cursor on the stream: fusion and this agent are independent
@@ -257,10 +271,13 @@ def build_scene_agent(bus, case_id, describe, stream, registry=None):
     check, not just the one writing to the blackboard.
     """
     agent = SceneAgent(bus, case_id, describe=describe,
-                       # Stand-in frame bytes. Real sorties supply captured
-                       # frames; the agent refuses to describe anything it is
-                       # not actually handed.
-                       image_loader=lambda frame_id: b"<stub frame bytes>")
+                       # Stand-in frame bytes, unless a caller has real ones —
+                       # the ground station passes the operator's uploaded
+                       # frame. They are not a decodable image, so a stub sortie
+                       # sends no crop and says so in its counters. The agent
+                       # refuses to describe anything it is not handed at all.
+                       image_loader=image_loader or (lambda frame_id: b"<stub frame bytes>"),
+                       frame_size=FRAME_SIZE)
     cursor = {"id": "0-0"}
 
     def handler(case_id, context):
@@ -329,7 +346,7 @@ class Wiring:
     agents: dict = field(default_factory=dict)
 
 
-def build_case(live_weather=False, seed=None):
+def build_case(live_weather=False, seed=None, image_loader=None):
     """Stand up a fully wired case: bus, guards, agents, orchestrator.
 
     Shared by this demo and the critic's, so both exercise the same system
@@ -339,6 +356,9 @@ def build_case(live_weather=False, seed=None):
     numbers quoted in the README and the critic demo's NDCG stay reproducible.
     An integer overrides every stub at once — a different draw of the same
     scenario, which is what you want when checking a result was not a fluke.
+
+    `image_loader` is where the Scene agent gets its frames. Left out, it gets
+    stub bytes, which are enough to exercise the pipeline and not enough to crop.
     """
     url = os.environ.get("REDIS_URL")
     if url:
@@ -398,7 +418,8 @@ def build_case(live_weather=False, seed=None):
 
     path_handler, _ = build_path_agent(bus, case.case_id, dem, complete, POINT_LAST_SEEN, 2.0,
                                        seed=PATH_SEED if seed is None else seed)
-    scene_handler, scene = build_scene_agent(bus, case.case_id, describe, stream, registry)
+    scene_handler, scene = build_scene_agent(bus, case.case_id, describe, stream, registry,
+                                             image_loader=image_loader)
     health_handler, health = build_health_agent(bus, case.case_id, health_complete, stream,
                                                 profile, registry, **health_bounds)
 
@@ -519,6 +540,10 @@ def main(argv=None):
     print(f"\n  scene VLM: {scene.api_calls} call(s) for {len(scene.described)} frame(s); "
           f"{scene.skipped_unconfirmed} unconfirmed detection(s) skipped, "
           f"{scene.skipped_already_seen} repeat frame(s) skipped")
+    print(f"             {scene.crops_sent} crop(s) sent with the frame, "
+          f"{scene.crops_dropped} refused by the endpoint, "
+          f"{scene.crops_unavailable} frame(s) with nothing croppable "
+          f"(this demo's stub frames are not decodable images)")
     print(f"  health:    {health.published} window(s) refined, {health.skipped} clue(s) skipped")
     print(f"  commands:  {audit.counts.get('operator command carries injection tells', 0)} "
           f"operator command(s) flagged and widened")

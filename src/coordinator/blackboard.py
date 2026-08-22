@@ -99,6 +99,12 @@ class Target:
     scene_description: str | None = None
     scene_hazards: list = field(default_factory=list)
     subject_state: str | None = None
+    # The environment around this target, as the scene VLM read it. Hazards are
+    # what is visible; `immediate_risks` is what they mean for the subject, and
+    # that is what the Risk stage scores.
+    scene_environment: str | None = None
+    immediate_risks: list = field(default_factory=list)
+    access_difficulty: str | None = None
     # Set when a picture is built, never stored on the live target: all three
     # depend on the clock and on context that changes independently of the
     # sighting itself.
@@ -133,6 +139,7 @@ class Target:
             track_ids=set(self.track_ids),
             clue_ids=list(self.clue_ids),
             scene_hazards=list(self.scene_hazards),
+            immediate_risks=list(self.immediate_risks),
         )
 
 

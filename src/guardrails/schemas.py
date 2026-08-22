@@ -35,20 +35,32 @@ def _blank_to_none(value):
 
 
 class SceneReply(BaseModel):
-    """What the VLM saw around a confirmed detection."""
+    """What the VLM saw around a confirmed detection.
+
+    Level 2: the person *and* their surroundings. Everything past `description`
+    is optional, so a model that answers the older, subject-only prompt still
+    validates — the new fields arrive as None rather than failing the reply.
+    """
 
     description: str = Field(..., min_length=1, max_length=2000)
     terrain: Optional[str] = None
     visibility: Optional[str] = None
     hazards: List[str] = Field(default_factory=list)
     subject_state: Optional[str] = None
+    # Environmental context. `hazards` is what is visible; `immediate_risks` is
+    # what those hazards mean for the subject, which is what Risk scores.
+    person_state: Optional[str] = None
+    environment: Optional[str] = None
+    immediate_risks: List[str] = Field(default_factory=list)
+    access_difficulty: Optional[str] = None
 
-    @field_validator("hazards", mode="before")
+    @field_validator("hazards", "immediate_risks", mode="before")
     @classmethod
     def _hazards_as_list(cls, value):
         return _as_list(value)
 
-    @field_validator("terrain", "visibility", "subject_state", mode="before")
+    @field_validator("terrain", "visibility", "subject_state", "person_state",
+                     "environment", "access_difficulty", mode="before")
     @classmethod
     def _optional_text(cls, value):
         return _blank_to_none(value)

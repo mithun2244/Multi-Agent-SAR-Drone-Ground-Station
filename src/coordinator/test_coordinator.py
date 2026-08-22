@@ -742,7 +742,8 @@ def test_orchestrator_rejects_bad_input():
 # --------------------------------------------------------------------------
 
 def _scene(track_id="1", description="Figure prone on scree.", hazards=(),
-           subject_state=None, case="case-0000", frame="frame_0001", geo=_SITE, conf=0.8):
+           subject_state=None, case="case-0000", frame="frame_0001", geo=_SITE, conf=0.8,
+           environment=None, immediate_risks=(), access_difficulty=None):
     return ClueContract(
         clue_id=f"scene-{next(_ids):03d}",
         case_id=case,
@@ -761,6 +762,9 @@ def _scene(track_id="1", description="Figure prone on scree.", hazards=(),
             "hazards": list(hazards),
             "subject_state": subject_state,
             "track_id": track_id,
+            "environment": environment,
+            "immediate_risks": list(immediate_risks),
+            "access_difficulty": access_difficulty,
         },
     )
 
@@ -799,6 +803,29 @@ def test_scene_annotates_a_target_without_creating_one():
     assert target.scene_hazards == ["fast water"]
     assert target.subject_state == "not moving"
     assert "Figure prone" in picture.render()
+
+
+def test_scene_environment_reaches_the_target_without_moving_urgency():
+    """Level 2 context is carried for the Risk stage. Urgency still counts only
+    visible hazards — scoring the same description twice would move a ranking
+    the tuning study fixed against the old signal."""
+    bus, _, fusion = _wire(trust={AgentSource.PERCEPTION_FUSION: 1.0})
+    bus.publish(_clue(track_id="1", conf=0.8, geo=_SITE))
+    bus.publish(_scene(track_id="1", hazards=["fast water"],
+                       environment="steep scree, wet ground, meltwater channel",
+                       immediate_risks=["drowning risk", "exposure risk"],
+                       access_difficulty="difficult"))
+
+    target = fusion.refresh("case-0000").targets[0]
+    assert target.scene_environment.startswith("steep scree")
+    assert target.immediate_risks == ["drowning risk", "exposure risk"]
+    assert target.access_difficulty == "difficult"
+    assert target.urgency == target.hazard_urgency, "one hazard, one urgency"
+
+    hazard_only = _wire(trust={AgentSource.PERCEPTION_FUSION: 1.0})
+    hazard_only[0].publish(_clue(track_id="1", conf=0.8, geo=_SITE))
+    hazard_only[0].publish(_scene(track_id="1", hazards=["fast water"]))
+    assert hazard_only[2].refresh("case-0000").targets[0].urgency == target.urgency
 
 
 def test_scene_never_adds_confidence():
@@ -1451,12 +1478,16 @@ def test_reason_only_compiles_what_the_picture_holds():
     bus, _, fusion = wiring
     bus.publish(_clue(track_id="1", geo=_SITE, conf=0.9))
     bus.publish(_clue(track_id="2", geo=None, conf=0.4))
-    bus.publish(_scene(track_id="1", hazards=("fast water", "loose rock")))
+    bus.publish(_scene(track_id="1", hazards=("fast water", "loose rock"),
+                       immediate_risks=("drowning risk",), access_difficulty="difficult"))
     facts = reason(fusion.refresh("case-0000"))
 
     assert facts.targets == 2 and facts.located == 1 and facts.unlocated == 1
     assert facts.best_confidence == 0.9
     assert facts.hazards == ("fast water", "loose rock")
+    assert facts.immediate_risks == ("drowning risk",)
+    assert facts.access_difficulty == "difficult", "the walk in to the top target"
+    assert "scene: fast water, loose rock, drowning risk" in facts.summary()
     assert facts.hypothermia_risk is False and facts.survival_window_hours is None
     assert facts.clues == 2, "the scene annotation describes an observation, it is not one"
 
@@ -1473,6 +1504,35 @@ def test_risk_is_scored_on_the_ten_point_scale_and_itemised():
                         hazards=("fast water", "loose rock", "cliff"), unlocated=2))
     assert worst.score == RISK_MAX, "the scale saturates rather than running away"
     assert worst.band == "CRITICAL"
+
+
+def test_the_environment_the_subject_is_in_raises_the_risk_score():
+    """A subject beside a river on a cliff edge, hard to reach, is in more
+    danger than the same subject in an open field — and every point says why."""
+    plain = risk(_facts())
+    beside_water = risk(_facts(immediate_risks=("drowning risk",)))
+    assert beside_water.score == plain.score + 2
+    assert any("water at the scene" in why for why, _ in beside_water.drivers)
+
+    exposed = risk(_facts(immediate_risks=("drowning risk", "fall risk from the ledge")))
+    assert exposed.score == plain.score + 4
+    assert any("fall exposure" in why for why, _ in exposed.drivers)
+
+    hard = risk(_facts(access_difficulty="difficult (cliff and dense forest)"))
+    assert hard.score == plain.score + 1
+    assert any("access to the top target is difficult" in why for why, _ in hard.drivers)
+
+    # Easy access is not a discount, and a risk that matches no category still
+    # counts for something rather than vanishing.
+    assert risk(_facts(access_difficulty="easy")).score == plain.score
+    other = risk(_facts(immediate_risks=("entrapment risk",)))
+    assert other.score == plain.score + 1
+    assert any("other risks at the scene" in why for why, _ in other.drivers)
+
+    # One river named twice is one river.
+    twice = risk(_facts(immediate_risks=("drowning risk", "fast water below")))
+    assert twice.score == beside_water.score
+    assert sum(points for _, points in twice.drivers) == twice.score - 1, "every point named"
 
 
 def test_the_protocol_picks_the_action_for_the_situation():

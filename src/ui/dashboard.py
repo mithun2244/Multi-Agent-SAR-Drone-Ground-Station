@@ -23,6 +23,7 @@ relative imports the rest of `src/` uses do not resolve. Drop it if the app is
 ever launched through `python -m streamlit run` from an installed package.
 """
 
+import io
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,7 @@ import streamlit as st
 from PIL import Image, ImageDraw
 from redis.exceptions import RedisError
 
+from src.agents.scene import crop_region
 from src.contracts.clue import AgentSource
 from src.coordinator.demo import DRONE, DRONE_ID, _search_area_dem, build_case
 from src.coordinator.router import ALL_AGENTS
@@ -141,6 +143,27 @@ def draw_boxes(image, boxes):
     return canvas
 
 
+def frame_loader(image):
+    """Hand the Scene agent the frame the operator actually uploaded.
+
+    The demo's stand-in bytes are not a decodable image, so a VLM run over them
+    gets no crop of the subject and describes a picture nobody sent. Here there
+    is a real frame, and it is the one the detector saw — so the crop the Scene
+    agent cuts is the same pixels the boxes were drawn on.
+    """
+    if image is None:
+        return None
+
+    def load(frame_id):
+        if frame_id != UPLOAD_FRAME_ID:
+            return None     # no bytes for it: the agent will not describe it
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="JPEG", quality=85)
+        return buffer.getvalue()
+
+    return load
+
+
 def run_pipeline(query, image=None, frames=4, altitude_m=1570.0, pitch_deg=55.0,
                  conf=DEFAULT_CONF):
     """Stand up a case under the current ablation environment and dispatch once.
@@ -149,7 +172,7 @@ def run_pipeline(query, image=None, frames=4, altitude_m=1570.0, pitch_deg=55.0,
     so the case is rebuilt per run — a toggle that only took effect on the next
     press would be worse than no toggle.
     """
-    wiring = build_case()
+    wiring = build_case(image_loader=frame_loader(image))
     if image is not None:
         wiring.orchestrator.register("detection", uploaded_detection_agent(
             wiring.bus, wiring.case.case_id, image, altitude_m, pitch_deg, conf))
@@ -364,6 +387,14 @@ def selfcheck():
         assert len(confirmed) == 1 and confirmed[0].confidence == 0.30
         assert not single_frame_tracker(0.5).update(clue, frame_id=UPLOAD_FRAME_ID), \
             "the confidence floor still has to mean something"
+
+        # The uploaded frame is what the Scene VLM gets, and the only frame it
+        # gets: a describe call for anything else has no bytes and never runs.
+        load = frame_loader(Image.new("RGB", SYNTHETIC_FRAME, "#0b1220"))
+        frame = load(UPLOAD_FRAME_ID)
+        assert crop_region(frame, [10.0, 20.0, 90.0, 140.0]), "a crop comes out of it"
+        assert load("some_other_frame") is None
+        assert frame_loader(None) is None, "no upload, no loader — the demo's stubs stand"
     finally:
         for name, value in env.items():
             os.environ.pop(name, None) if value is None else os.environ.update({name: value})
@@ -374,7 +405,8 @@ def selfcheck():
     print("  ok  ABLATION_DECISION=off leaves no risk score to reach for")
     print("  ok  intrinsics scale with the frame at a fixed field of view")
     print("  ok  one frame confirms at the operator's floor, and only at it")
-    print("\n6 checks passed")
+    print("  ok  the uploaded frame is the one the scene VLM crops")
+    print("\n7 checks passed")
     return 0
 
 

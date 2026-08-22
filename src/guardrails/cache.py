@@ -50,10 +50,14 @@ class ResponseCache:
     def key(self, prompt, image=None, mime_type="image/jpeg"):
         digest = hashlib.sha256()
         digest.update((prompt or "").encode())
-        if image is not None:
+        # One image or several — the Scene agent sends a crop and the frame it
+        # came from. Each is hashed in order, so the same two pictures swapped
+        # round are a different key.
+        images = [image] if isinstance(image, (bytes, bytearray)) else list(image or ())
+        for each in images:
             digest.update(b"\x00")
             digest.update(mime_type.encode())
-            digest.update(hashlib.sha256(image).digest())
+            digest.update(hashlib.sha256(each).digest())
         return digest.hexdigest()
 
     def get(self, key):

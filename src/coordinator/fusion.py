@@ -184,6 +184,10 @@ class Picture:
                 lines.append(f"  {t.target_id}: {t.scene_description}")
                 if t.scene_hazards:
                     lines.append(f"      hazards: {', '.join(t.scene_hazards)}")
+                if t.immediate_risks:
+                    lines.append(f"      risks: {', '.join(t.immediate_risks)}")
+                if t.access_difficulty:
+                    lines.append(f"      access: {t.access_difficulty}")
 
         if self.insights:
             lines.append("")
@@ -554,9 +558,16 @@ class CoordinatorFusion:
         metadata = clue.agent_metadata
         target.scene_description = metadata.get("description") or clue.finding_summary
         target.scene_hazards = [str(h) for h in (metadata.get("hazards") or [])]
-        target.subject_state = metadata.get("subject_state")
+        target.subject_state = metadata.get("subject_state") or metadata.get("person_state")
+        target.scene_environment = metadata.get("environment")
+        target.immediate_risks = [str(r) for r in (metadata.get("immediate_risks") or [])]
+        target.access_difficulty = metadata.get("access_difficulty")
         target.clue_ids = (target.clue_ids + [clue.clue_id])[-_MAX_LINEAGE:]
-        # Deliberately no confidence update: see ANNOTATION_SOURCES.
+        # Deliberately no confidence update: see ANNOTATION_SOURCES. Nor does
+        # the environmental read touch urgency — only `scene_hazards` does, as
+        # before. Risks and access difficulty are scored once, by the Risk
+        # stage; feeding them into urgency as well would count one description
+        # twice and move a ranking Phase 9 tuned against the old signal.
 
     # -- urgency -----------------------------------------------------------
 

@@ -50,6 +50,21 @@ WINDOW_TIGHT_H = 12
 # their own the whole score.
 HAZARD_CAP = 2
 
+# What the environment around the subject costs, matched against the risks the
+# scene VLM listed. Each category scores once however many phrases name it —
+# "drowning risk" and "river below" are one river, not two.
+#
+# Matched against `immediate_risks` and nothing else. Scanning the environment
+# prose for these words instead would score "no water nearby" as water; a false
+# +2 on every description that mentions a river is worse than a missed one,
+# because it is silent. The prompt asks for this list explicitly.
+ENVIRONMENT_RISKS = (
+    (("drown", "water", "river", "lake", "flood"), 2, "water at the scene"),
+    (("fall", "cliff", "ledge", "slope", "scree"), 2, "fall exposure at the scene"),
+)
+OTHER_RISK_POINTS = 1        # entrapment, exposure, anything else it saw
+DIFFICULT_ACCESS_POINTS = 1
+
 # Urgency above this means the window is closing on the top target now.
 URGENCY_PRESSING = 0.8
 
@@ -85,6 +100,10 @@ class Facts:
     top_position: tuple | None = None
     top_urgency: float = 0.0
     hazards: tuple = ()
+    # What the scene VLM read off the ground around the targets: the risks those
+    # hazards pose, and how hard the top target is to reach.
+    immediate_risks: tuple = ()
+    access_difficulty: str | None = None
     hypothermia_risk: bool = False
     survival_window_hours: int | None = None
     sectors: int = 0
@@ -95,20 +114,32 @@ class Facts:
     def summary(self):
         where = (f"{self.top_position[0]:.5f}, {self.top_position[1]:.5f}"
                  if self.top_position else "no fix")
-        return (f"{self.targets} target(s) from {self.clues} clue(s), "
+        line = (f"{self.targets} target(s) from {self.clues} clue(s), "
                 f"{self.located} located / {self.unlocated} not; "
                 f"best confidence {self.best_confidence:.2f} at {where}")
+        # What the ground looks like, when anything looked at it. Stated here,
+        # scored in the next stage: the facts do not say whether a river is bad.
+        ground = list(self.hazards) + [r for r in self.immediate_risks
+                                       if r not in self.hazards]
+        if ground:
+            line += f"; scene: {', '.join(ground)}"
+        if self.access_difficulty:
+            line += f"; access {self.access_difficulty}"
+        return line
 
 
 def reason(picture):
     """Stage 1: compile the accumulated clues into objective facts."""
     targets = picture.targets
     top = targets[0] if targets else None
-    hazards = []
+    hazards, risks = [], []
     for target in targets:
         for hazard in target.scene_hazards:
             if hazard not in hazards:
                 hazards.append(hazard)
+        for risk_seen in getattr(target, "immediate_risks", ()):
+            if risk_seen not in risks:
+                risks.append(risk_seen)
 
     return Facts(
         case_id=picture.case_id,
@@ -120,6 +151,11 @@ def reason(picture):
         top_position=top.position if top else None,
         top_urgency=top.urgency if top else 0.0,
         hazards=tuple(hazards),
+        immediate_risks=tuple(risks),
+        # Hazards and risks are unioned across targets — any of them is a reason
+        # to hurry. Access difficulty is not: it describes the walk in to one
+        # place, and the place a team is being sent is the top target.
+        access_difficulty=getattr(top, "access_difficulty", None) if top else None,
         hypothermia_risk=picture.hypothermia_risk,
         survival_window_hours=picture.survival_window_hours,
         sectors=len(picture.sectors),
@@ -172,6 +208,26 @@ def risk(facts):
     if facts.hazards:
         drivers.append((f"hazards at the scene: {', '.join(facts.hazards)}",
                         min(HAZARD_CAP, len(facts.hazards))))
+
+    # Each environmental risk is itemised with the phrases that raised it, so an
+    # operator who thinks the model misread the ground can argue with that line
+    # rather than with the total.
+    named = set()
+    for keywords, points, why in ENVIRONMENT_RISKS:
+        hit = [r for r in facts.immediate_risks
+               if any(word in r.lower() for word in keywords)]
+        if hit:
+            drivers.append((f"{why}: {', '.join(hit)}", points))
+            named.update(hit)
+
+    other = [r for r in facts.immediate_risks if r not in named]
+    if other:
+        drivers.append((f"other risks at the scene: {', '.join(other)}",
+                        OTHER_RISK_POINTS))
+
+    if facts.access_difficulty and "difficult" in facts.access_difficulty.lower():
+        drivers.append((f"access to the top target is difficult "
+                        f"({facts.access_difficulty})", DIFFICULT_ACCESS_POINTS))
 
     if facts.unlocated:
         # Seen and unreachable is worse than not yet seen: somebody is out there

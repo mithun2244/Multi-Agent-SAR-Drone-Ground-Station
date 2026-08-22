@@ -8,7 +8,7 @@ finds; and a four-stage decision chain turns that picture into one validated
 brief — who is out there, where, how dangerous it is, and what to do next.
 
 Built in phases, each with its own exit criteria and test suite.
-**434 automated checks** across nine suites, no network required.
+**447 automated checks** across nine suites, no network required.
 
 ```
 ┌ PERCEPTION ── on the drone, at frame rate ─────────────────────────────────┐
@@ -103,7 +103,7 @@ completer, so the suite never touches the network.
 |---|---|---|
 | **Weather** | Open-Meteo API — **no LLM** | Wind chill, hypothermia risk, survival window |
 | **Path** | **Monte-Carlo** + `meta/llama-3.1-70b-instruct` | Simulates drift into ranked search sectors; the LLM only writes the field briefing over sectors already fixed |
-| **Scene** | `meta/llama-3.2-90b-vision-instruct` | VLM description, **only** on a frame that already holds a confirmed track |
+| **Scene** | `meta/llama-3.2-90b-vision-instruct` | VLM description of the subject **and** the ground around them — terrain, hazards, immediate risks, access difficulty — from a crop of the detection box plus the whole frame, **only** on a frame that already holds a confirmed track |
 | **Health** | `meta/llama-3.1-70b-instruct` | Subject-specific refinement of the survival window, as a clamped multiplier |
 
 Plus **Detection** on the drone, which is what the other four are gathering
@@ -145,7 +145,7 @@ risk score without disagreeing about the facts.
 
 | Stage | In → out | Refuses to |
 |---|---|---|
-| **Reason** | picture → `Facts`: target counts, best confidence, what is located, hazards named, the survival window | judge them |
+| **Reason** | picture → `Facts`: target counts, best confidence, what is located, hazards and environmental risks named, how hard the top target is to reach, the survival window | judge them |
 | **Risk** | facts → `Risk`: situational danger on an explicit **1–10 scale**, with every point itemised against its driver | choose an action |
 | **Recommend** | facts + risk → `Recommendation`: one action from the protocol table, naming the rule that chose it | invent one outside protocol |
 | **Orchestrate** | all three → `CommanderBrief` | publish an order it could not make consistent |

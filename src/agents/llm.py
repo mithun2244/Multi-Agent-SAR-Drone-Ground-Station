@@ -88,17 +88,29 @@ class NimClient:
         return NimClient(self.api_key, model=model or self.model, **settings)
 
     def complete(self, prompt, image=None, mime_type="image/jpeg"):
-        """One turn in, text out. Passing `image` bytes switches to the VLM."""
+        """One turn in, text out. Passing `image` bytes switches to the VLM.
+
+        `image` may also be a sequence of frames — the Scene agent sends a crop
+        of the subject and the whole frame. They inline in the order given, and
+        the size limit is on the *total*: NIM's cap is on the request, not on
+        each picture in it.
+        """
         content = prompt
         model = self.model
-        if image is not None:
-            if len(image) > MAX_INLINE_IMAGE_BYTES:
+        images = [image] if isinstance(image, (bytes, bytearray)) else list(image or ())
+        if images:
+            total = sum(len(each) for each in images)
+            if total > MAX_INLINE_IMAGE_BYTES:
                 raise LLMUnavailable(
-                    f"image is {len(image)} bytes, over NIM's {MAX_INLINE_IMAGE_BYTES} "
-                    f"inline limit; upload via the assets API instead"
+                    f"{len(images)} image(s) total {total} bytes, over NIM's "
+                    f"{MAX_INLINE_IMAGE_BYTES} inline limit; upload via the assets "
+                    f"API instead"
                 )
-            encoded = base64.b64encode(image).decode()
-            content = f'{prompt} <img src="data:{mime_type};base64,{encoded}" />'
+            tags = "".join(
+                f' <img src="data:{mime_type};base64,{base64.b64encode(each).decode()}" />'
+                for each in images
+            )
+            content = f"{prompt}{tags}"
             model = self.vision_model
 
         request = urllib.request.Request(
